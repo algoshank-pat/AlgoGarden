@@ -4,14 +4,18 @@ from datetime import timedelta
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 
-class LookupUnavailable(RuntimeError):pass
+class LookupUnavailable(RuntimeError):
+ def __init__(self,message,phase='pool'):
+  super().__init__(message);self.phase=phase
+class ToolFailure(RuntimeError):
+ phase='tool'
 STOP=object()
 
 class Worker:
  def __init__(self,parameters,decode,idle_seconds):
   self.parameters=parameters;self.decode=decode;self.idle=idle_seconds
   self.jobs=queue.Queue(maxsize=32);self.stopping=False;self.failed=False
-  self.loop=None;self.task=None;self.current=None;self.wake=None
+  self.loop=None;self.task=None;self.current=None;self.wake=None;self.phase='starting'
   self.thread=threading.Thread(target=self.run,name='reservation-mcp',daemon=True);self.thread.start()
  def submit(self,phone,request_id,deadline):
   if self.stopping or self.failed:raise LookupUnavailable('MCP connection is recovering')
@@ -39,6 +43,7 @@ class Worker:
    async with stdio_client(self.parameters) as (read,write):
     spawn=(time.perf_counter()-started)*1000
     async with ClientSession(read,write,read_timeout_seconds=timedelta(seconds=15)) as session:
+     self.phase='initializing'
      init_started=time.perf_counter();await session.initialize();init_completed=time.perf_counter()
      startup.reschedule(None);first=True
      while job is not STOP:
@@ -48,11 +53,17 @@ class Worker:
        if not future.done():future.set_exception(TimeoutError('Lookup deadline expired in queue'))
       else:
        mark=time.perf_counter()
-       async with asyncio.timeout(min(15,deadline-mark)):
-        result=await session.call_tool('lookup_reservations_by_phone',{'phone':phone,'request_id':request_id})
-       value=self.decode(result)
+       self.phase='tool'
+       try:
+        async with asyncio.timeout(min(15,deadline-mark)):
+         result=await session.call_tool('lookup_reservations_by_phone',{'phone':phone,'request_id':request_id})
+        self.phase='validating';value=self.decode(result)
+       except ToolFailure as exc:
+        self.current=None;self.phase='idle'
+        if not future.done():future.set_exception(exc)
+        first=False;job=await self.next_job();continue
        metrics={'spawn_ms':spawn if first else 0,'initialize_started':init_started if first else mark,'initialize_completed':init_completed if first else mark,'initialize_ms':(init_completed-init_started)*1000 if first else 0,'tool_ms':(time.perf_counter()-mark)*1000,'queue_wait_ms':max(0,(started if first else mark)-submitted)*1000,'cleanup_ms':0,'reused':not first}
-       self.current=None
+       self.current=None;self.phase='idle'
        if not future.done():future.set_result((value,metrics))
       first=False;self.current=None
       job=await self.next_job()
@@ -60,7 +71,7 @@ class Worker:
   error=LookupUnavailable('MCP connection closed')
   try:asyncio.run(self.serve())
   except BaseException as exc:
-   self.failed=True;error=LookupUnavailable('MCP connection failed: '+type(exc).__name__)
+   self.failed=True;error=LookupUnavailable('MCP connection failed: '+type(exc).__name__,self.phase)
   finally:
    self.stopping=True
    if self.current is not None and not self.current[-1].done():self.current[-1].set_exception(error)
@@ -113,7 +124,11 @@ class LookupPool:
    raise TimeoutError('MCP lookup exceeded its deadline')
  def close(self):
   with self.lock:self.closed=True;workers=list(self.workers.values());self.workers.clear()
-  for worker in workers:worker.close()
+  errors=[]
+  for worker in workers:
+   try:worker.close()
+   except Exception as exc:errors.append(exc)
+  if errors:raise LookupUnavailable('MCP worker cleanup failed') from errors[0]
 
  def retire(self,key):
   with self.lock:

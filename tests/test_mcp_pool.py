@@ -118,5 +118,5 @@ def test_invalid_phone_never_replays_previous_results(fixture):
  assert client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112233')['found']
  worker=next(iter(client._pool.workers.values()))
  with pytest.raises(RuntimeError):client.lookup_reservations_by_phone(store,'a','2026-10-28','invalid-phone')
- worker.thread.join(5)
  assert client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112244')['reservations'][0]['id']==ids['a','9900112244']
+ assert next(iter(client._pool.workers.values())) is worker

@@ -13,13 +13,14 @@ from mcp.client.stdio import stdio_client
 from structured_io import LookupResult
 import atexit
 from threading import Lock
+from mcp_lookup_pool import ToolFailure
 
 SERVER_SCRIPT=Path(__file__).with_name('reservation_mcp.py')
 _pool=None
 _pool_lock=Lock()
 
 def decode(result):
-    if result.isError:raise RuntimeError('Reservation lookup tool failed')
+    if result.isError:raise ToolFailure('Reservation lookup tool failed')
     data=result.structuredContent
     if data is None:data=json.loads(''.join(block.text for block in result.content if block.type=='text'))
     if isinstance(data,dict) and 'result' in data:data=data['result']
@@ -54,7 +55,11 @@ def lookup_reservations_by_phone(store, business_id, today, phone):
         with _pool_lock:
             if _pool is None:_pool=LookupPool()
             pool=_pool
-        value,metrics=pool.lookup(key,parameters,decode,phone,request_id)
+        try:value,metrics=pool.lookup(key,parameters,decode,phone,request_id)
+        except Exception as error:
+            from local_audit import event
+            event('mcp.lookup.failed',{'total_ms':(time.perf_counter()-started)*1000,'phase':getattr(error,'phase','deadline'),'error_type':type(error).__name__})
+            raise
         try:value=scoped(value,business_id,today,phone,store.phone_region)
         except (ValueError,KeyError,TypeError):
             pool.retire(key)
