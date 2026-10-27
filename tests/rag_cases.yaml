@@ -1,0 +1,36 @@
+businesses: [malnad_mane, maison_olive]
+cases:
+  - {query: "How much notice should I give to cancel?", source: cancellations.md}
+  - {query: "Who should I contact to change a reservation?", source: cancellations.md}
+  - {query: "How long will you hold my table if I am late?", source: cancellations.md}
+  - {query: "Can the receptionist automatically cancel my reservation?", source: cancellations.md}
+  - {query: "What is your late arrival policy?", source: cancellations.md}
+  - {query: "Tell me about reservation cancellations.", source: cancellations.md}
+  - {query: "Can I bring an outside birthday cake?", source: groups_events.md}
+  - {query: "Can you arrange private dining?", source: groups_events.md}
+  - {query: "Who confirms private dining arrangements?", source: groups_events.md}
+  - {query: "What should a large group do before booking?", source: groups_events.md}
+  - {query: "Can the receptionist confirm a private room?", source: groups_events.md}
+  - {query: "Can you host a celebration dinner?", source: groups_events.md}
+  - {query: "Can I bring my dog into the dining room?", source: kids_pets.md}
+  - {query: "Are children welcome?", source: kids_pets.md}
+  - {query: "Do you have high chairs?", source: kids_pets.md}
+  - {query: "Should I tell staff about an assistance animal?", source: kids_pets.md}
+  - {query: "What is your policy on pets indoors?", source: kids_pets.md}
+  - {query: "Should I request a high chair before visiting?", source: kids_pets.md}
+  - {query: "What should I wear to dinner?", source: dress_corkage.md}
+  - {query: "What is your dress code?", source: dress_corkage.md}
+  - {query: "Can I bring my own wine?", source: dress_corkage.md}
+  - {query: "Is corkage offered?", source: dress_corkage.md}
+  - {query: "Who approves outside alcoholic drinks?", source: dress_corkage.md}
+  - {query: "Are casual clothes suitable?", source: dress_corkage.md}
+  - {query: "What payment methods do you accept?", source: payment_access.md}
+  - {query: "Can I pay by debit card?", source: payment_access.md}
+  - {query: "Can I pay by credit card?", source: payment_access.md}
+  - {query: "Can our group split the bill?", source: payment_access.md}
+  - {query: "Who can confirm wheelchair seating?", source: payment_access.md}
+  - {query: "How do I check step-free access?", source: payment_access.md}
+negatives:
+  - "Can you book my flight to Tokyo?"
+  - "What is the weather in Oslo next month?"
+  - "Which cryptocurrency should I buy?"

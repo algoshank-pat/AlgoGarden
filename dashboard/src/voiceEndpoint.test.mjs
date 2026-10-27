@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {VoiceEndpoint,SpeechBargeIn} from './voiceEndpoint.mjs';
+const frame=(energy)=>new Float32Array(1600).fill(energy);
+test('idle silence never submits a turn',()=>{const e=new VoiceEndpoint(16000);for(let i=0;i<100;i++)assert.equal(e.feed(frame(0)),null)});
+test('phone digit pauses stay in one automatic turn',()=>{const e=new VoiceEndpoint(16000);for(let digit=0;digit<10;digit++){for(let i=0;i<2;i++)assert.equal(e.feed(frame(.1)),null);for(let i=0;i<5;i++)assert.equal(e.feed(frame(0)),null)}let result;for(let i=0;i<5;i++)result=e.feed(frame(0));assert.ok(result?.length);assert.equal(e.started,false)});
+test('brief click is discarded',()=>{const e=new VoiceEndpoint(16000);e.feed(frame(.1));let result;for(let i=0;i<10;i++)result=e.feed(frame(0));assert.equal(result,null)});
+test('long speech is bounded below server limit',()=>{const e=new VoiceEndpoint(16000);let result;for(let i=0;i<280;i++)result=e.feed(frame(.1));assert.equal(result.length,280)});
+test('interruption tolerates phoneme gaps and preserves leading speech',()=>{let paused=0;const b=new SpeechBargeIn(16000,()=>paused++);assert.equal(b.feed(frame(.1)),null);assert.equal(b.feed(frame(0)),null);assert.equal(b.feed(frame(.1)),null);const lead=b.feed(frame(.1));assert.equal(paused,1);assert.equal(lead.length,4);assert.equal(lead[0][0],frame(.1)[0]);});
+test('silence or one click cannot interrupt playback',()=>{let paused=0;const b=new SpeechBargeIn(16000,()=>paused++);b.feed(frame(.1));for(let i=0;i<20;i++)assert.equal(b.feed(frame(0)),null);assert.equal(paused,0);});

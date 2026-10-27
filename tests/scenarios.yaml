@@ -1,0 +1,35 @@
+# Each scenario is one caller turn on a fresh call.
+# expected_tool: tool the receptionist must call (none = answer from prompt facts / ask for details).
+# expect_in_reply (optional): words that should appear in the reply (case-insensitive, any one).
+- caller: "Hi, are you open for lunch today? Till what time?"
+  expected_tool: get_hours
+- caller: "Are you open on Monday?"
+  expected_tool: get_hours
+  expect_in_reply: ["closed", "off", "not open"]
+- caller: "Where is the restaurant exactly?"
+  expected_tool: get_location
+- caller: "What desserts do you have?"
+  expected_tool: get_menu
+- caller: "How much is the chicken ghee roast and is it very spicy?"
+  expected_tool: check_dish
+- caller: "My son has a cashew allergy. Is the paneer butter masala safe for him?"
+  expected_tool: check_dish
+  expect_in_reply: ["cashew", "not safe", "contains"]
+- caller: "Do you have butter chicken?"
+  expected_tool: check_dish
+  expect_in_reply: ["not on", "don't have", "do not have", "not available"]
+- caller: "I'm Kiran, 9845098450. Table for 4 this Saturday at 8 PM please."
+  expected_tool: book_table
+  expect_in_reply: ["full", "booked", "not available", "alternative", "7", "9"]
+- caller: "This is Meera, 9900112233. Please book a table for 2 this Wednesday at 1 PM."
+  expected_tool: book_table
+- caller: "Takeaway please: 2 masala dosa and 1 filter coffee, name Arjun, phone 9611122233, pickup at 8:30 pm."
+  expected_tool: place_takeaway_order
+  expect_in_reply: ["290", "305"]
+- caller: "Tell the owner that Ravi from Infosys called about a catering order for 80 people, my number is 9880055667."
+  expected_tool: take_message
+- caller: "The food I got yesterday was cold and stale, I want to speak to the manager now!"
+  expected_tool: transfer_to_human
+- caller: "Do you serve beer?"
+  expected_tool: none
+  expect_in_reply: ["no", "not"]

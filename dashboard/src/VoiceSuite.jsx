@@ -1,0 +1,9 @@
+import React,{useEffect,useState} from 'react';
+
+export default function VoiceSuite({disabled,onRunning}){
+ const [suite,setSuite]=useState(null),[error,setError]=useState('');
+ async function refresh(){try{const r=await fetch('/api/voice/tests');if(!r.ok)throw Error('Cannot reach the test runner.');const data=await r.json();setSuite(data);setError('');onRunning(data.status==='running');}catch(e){setError(e.message)}}
+ useEffect(()=>{refresh();const timer=setInterval(refresh,2000);return()=>clearInterval(timer)},[]);
+ async function run(){setError('');try{const r=await fetch('/api/voice/tests',{method:'POST'});if(!r.ok){const d=await r.json();throw Error(d.detail||'Could not start tests.')}const d=await r.json();setSuite(d);onRunning(true);}catch(e){setError(e.message)}}
+ return <section className="voice-suite" aria-label="Automated voice tests"><div className="voice-suite-heading"><h2>Voice test suite</h2><button className="voice-action" disabled={disabled||!suite||suite.status==='running'} onClick={run}>{suite?.status==='running'?'Tests running…':'Run all tests'}</button></div><p>Generated speech · Tests local Parakeet, agent and Piper. Creates test bookings and cancels them afterward. End your call before running. Allow a few minutes.</p>{error&&<div role="alert">{error}</div>}<ul aria-live="polite">{suite?.scenarios.map(s=><li key={s.name}><div><strong>{s.name}</strong><span className={`suite-status ${s.status}`}>{s.status}</span></div>{s.duration_seconds!=null&&<small>{s.duration_seconds}s · Cleanup {s.cleanup_verified?'verified':'needs review'}</small>}{s.error&&<p>{s.error}</p>}{s.checks&&<details><summary>Scenario checks</summary>{Object.entries(s.checks).map(([key,value])=><div key={key}>{value?'✓':'✕'} {key.replaceAll('_',' ')}</div>)}</details>}</li>)}</ul></section>;
+}

@@ -1,0 +1,74 @@
+name: Algo bites
+currency: USD
+timezone: America/Chicago
+phone_region: US
+knowledge_id: malnad_mane
+cuisine: South Indian (Karnataka, Malnad and Mangalorean)
+address: "United States (street address not configured)"
+landmark: "Ask our staff for directions."
+phone: null
+maps_link: null
+
+hours:
+  weekly_off: null
+  shifts:
+    brunch: {open: "07:00", close: "10:00", days: [saturday, sunday]}
+    lunch: {open: "11:00", close: "15:00"}
+    dinner: {open: "18:00", close: "23:00"}
+  notes: "Weekend special brunch in addition to daily lunch and dinner. Reservations allow 90 minutes before service closes."
+
+seating:
+  seats_per_slot: 40          # seats available per booking time (bookings are per exact time)
+  max_party_size: 12          # larger groups -> transfer to manager
+  table_count: 10
+  seats_per_table: 4
+  duration_minutes: 90
+  # Explicit legacy holds only; real reservations are read from SQLite.
+  existing_bookings: {}
+
+delivery:
+  radius_km: 5
+  partners: [Swiggy, Zomato]
+  own_delivery: "Direct orders by phone get free delivery within 3 km on bills above $30."
+
+parking: "Two-wheeler parking in front; valet for cars on Friday to Sunday dinner."
+
+specials_of_the_day:
+  - "Neer dosa with chicken sukka combo, $19"
+  - "Kadubu with kai rasa (steamed rice dumplings with coconut curry), $14"
+
+menu:
+  # category: starters | mains | breads_rice | desserts | beverages
+  - {name: "Gobi Manchurian", category: starters, price_usd: 9, veg: true, spice: medium, allergens: [gluten, soy], available: true}
+  - {name: "Mushroom Pepper Fry", category: starters, price_usd: 11, veg: true, spice: hot, allergens: [], available: true}
+  - {name: "Chicken Ghee Roast", category: starters, price_usd: 17, veg: false, spice: hot, allergens: [dairy], available: true}
+  - {name: "Prawns Rava Fry", category: starters, price_usd: 21, veg: false, spice: medium, allergens: [shellfish, gluten], available: true}
+  - {name: "Anjal (Kingfish) Tawa Fry", category: starters, price_usd: 24, veg: false, spice: medium, allergens: [fish], available: false}
+  - {name: "Masala Dosa", category: mains, price_usd: 12, veg: true, spice: mild, allergens: [dairy], available: true}
+  - {name: "Akki Rotti with Chutney", category: mains, price_usd: 11, veg: true, spice: mild, allergens: [], available: true}
+  - {name: "Bisi Bele Bath", category: mains, price_usd: 13, veg: true, spice: medium, allergens: [dairy, peanuts], available: true}
+  - {name: "Paneer Butter Masala", category: mains, price_usd: 16, veg: true, spice: mild, allergens: [dairy, cashew], available: true}
+  - {name: "Mangalore Chicken Curry", category: mains, price_usd: 19, veg: false, spice: hot, allergens: [], available: true}
+  - {name: "Pandi Curry (Coorg Pork)", category: mains, price_usd: 22, veg: false, spice: hot, allergens: [], available: true}
+  - {name: "Mutton Chops Gravy", category: mains, price_usd: 24, veg: false, spice: medium, allergens: [], available: true}
+  - {name: "Ragi Mudde (2 balls)", category: breads_rice, price_usd: 5, veg: true, spice: mild, allergens: [], available: true}
+  - {name: "Neer Dosa (3 pcs)", category: breads_rice, price_usd: 6, veg: true, spice: mild, allergens: [], available: true}
+  - {name: "Malabar Parotta", category: breads_rice, price_usd: 5, veg: true, spice: mild, allergens: [gluten, dairy], available: true}
+  - {name: "Ghee Rice", category: breads_rice, price_usd: 9, veg: true, spice: mild, allergens: [dairy, cashew], available: true}
+  - {name: "Chicken Biryani (Donne)", category: breads_rice, price_usd: 18, veg: false, spice: medium, allergens: [dairy], available: true}
+  - {name: "Mysore Pak", category: desserts, price_usd: 7, veg: true, spice: none, allergens: [dairy], available: true}
+  - {name: "Elaneer Payasam", category: desserts, price_usd: 9, veg: true, spice: none, allergens: [dairy, cashew], available: true}
+  - {name: "Filter Coffee", category: beverages, price_usd: 4, veg: true, spice: none, allergens: [dairy], available: true}
+  - {name: "Fresh Lime Soda", category: beverages, price_usd: 5, veg: true, spice: none, allergens: [], available: true}
+
+faqs:
+  - q: Do you have Jain or no-onion-garlic food?
+    a: "Masala Dosa, Akki Rotti and Neer Dosa can be made without onion and garlic on request."
+  - q: What payment methods do you accept?
+    a: "Cash, UPI and all debit and credit cards."
+  - q: Is there a service charge?
+    a: "No service charge; GST of 5 percent is added to the bill."
+  - q: Is the restaurant kid friendly?
+    a: "Yes, high chairs are available and we can make any dish less spicy for kids."
+  - q: Do you serve alcohol?
+    a: "No, we do not serve alcohol."

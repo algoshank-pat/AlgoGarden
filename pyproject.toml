@@ -1,0 +1,31 @@
+[project]
+name = "restaurant-receptionist"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.5.9",
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "jsonschema>=4.0",
+    "langsmith>=0.14.12",
+    "mcp>=1.0,<2",
+    "ollama>=0.6.3",
+    "phonenumbers>=9.0.41",
+    "pyyaml>=6.0.3",
+    "tzdata>=2026.5",
+    "uvicorn>=0.54.0",
+]
+
+[project.optional-dependencies]
+voice = [
+    "av<19",
+    "faster-whisper>=1.2.1",
+    "piper-tts>=1.8.0",
+    "silero-vad>=6.2.3",
+    "sounddevice>=0.5.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

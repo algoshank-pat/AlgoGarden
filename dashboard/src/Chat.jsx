@@ -1,0 +1,52 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {ArrowLeft,ArrowUp,Leaf,RefreshCw,Phone,MessageCircle,X,ArrowRight} from 'lucide-react';
+import './chat.css';
+
+async function api(path,options={}){
+ const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
+ if(!response.ok){let detail;try{detail=(await response.json()).detail}catch{}throw new Error(typeof detail==='string'?detail:'Could not reach the receptionist. Check that the Python API is running.');}
+ return response.status===204?null:response.json();
+}
+
+export default function Chat(){
+ const [restaurant,setRestaurant]=useState(null),[session,setSession]=useState(null),[messages,setMessages]=useState([]),[text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[ended,setEnded]=useState(false),[pending,setPending]=useState(null);
+ const [chatOpen,setChatOpen]=useState(false),[menuCategory,setMenuCategory]=useState('all');
+ const bottom=useRef(null),input=useRef(null),sending=useRef(false),initialized=useRef(false),generation=useRef(0);
+ async function stop(){
+  const stoppedToken=++generation.current;setEnded(true);setBusy(false);setPending(null);setText('');sending.current=false;setError('');
+  setMessages(m=>[...m,{role:'assistant',text:'Conversation stopped. A request already processing may still complete. Check Reservations if you were confirming a booking or change.'}]);
+  try{if(session)await api(`/api/sessions/${session}/stop`,{method:'POST'});}catch(e){if(stoppedToken===generation.current)setError(e.message)}
+ }
+ async function start(){
+  if(sending.current)return;
+  const startToken=++generation.current;
+  sending.current=true;setBusy(true);setError('');
+  try{
+   const info=await api('/api/restaurant');
+   if(session)await api(`/api/sessions/${session}/stop`,{method:'POST'});
+   const data=await api('/api/sessions',{method:'POST',body:JSON.stringify({channel:'chat'})});
+   if(startToken!==generation.current){fetch(`/api/sessions/${data.session_id}/stop`,{method:'POST'});return;}
+   setRestaurant(info);setSession(data.session_id);setMessages([{role:'assistant',text:data.greeting}]);setEnded(false);setPending(null);setText('');
+  }catch(e){setError(e.message)}finally{sending.current=false;setBusy(false);input.current?.focus()}
+ }
+ useEffect(()=>{api('/api/restaurant').then(setRestaurant).catch(e=>setError(e.message))},[]);
+ function openChat(){setChatOpen(true);if(!initialized.current){initialized.current=true;start()}}
+ useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'nearest'})},[messages,busy]);
+ async function send(value, retry=false){
+  if(sending.current||!session||ended)return;
+  const content=value.trim();if(!content)return;
+  const token=generation.current;
+  const payload=retry?pending:{request_id:crypto.randomUUID(),text:content};
+  if(!payload)return;
+  sending.current=true;setBusy(true);setError('');setPending(payload);
+  if(!retry){setMessages(prev=>[...prev,{role:'user',text:content}]);setText('')}
+  try{
+   const data=await api(`/api/sessions/${session}/turns`,{method:'POST',body:JSON.stringify(payload)});
+   if(token!==generation.current)return;
+   setMessages(prev=>[...prev,{role:'assistant',text:data.reply,phone:data.staff_phone,sources:data.sources}]);setEnded(data.ended);setPending(null);
+  }catch(e){if(token===generation.current)setError(e.message)}finally{if(token===generation.current){sending.current=false;setBusy(false);input.current?.focus()}}
+ }
+ const usd=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(value);
+ const categories={all:'All dishes',starters:'Small plates',mains:'Mains',breads_rice:'Rice & breads',desserts:'Something sweet',beverages:'Drinks'};
+ return <div className="restaurant-site"><header className="restaurant-nav"><a className="restaurant-logo" href="/chat">{restaurant?.name||'Algo bites'}<span>COASTAL KITCHEN</span></a><nav aria-label="Restaurant"><a href="#menu">Menu</a><a href="#specials">Specials</a><a href="#visit">Visit us</a><a href="/voice" className="restaurant-call"><Phone size={15}/>Talk to us</a></nav></header><main className="restaurant-main"><section className="restaurant-hero"><div className="hero-copy"><span className="restaurant-kicker">A LITTLE COAST. A LOT OF SOUL.</span><h1>Good food.<br/>Great company.</h1><p>South Indian favourites, coastal spices, and a table with your name on it.</p><div className="restaurant-hero-actions"><a href="#menu">Explore the menu <ArrowRight size={17}/></a><button onClick={openChat}>Book a table</button></div><small>Lunch & dinner daily · Weekend brunch</small></div><div className="hero-photo" role="img" aria-label="A warmly lit restaurant dining room"><span>Stay a little longer.</span></div></section><section id="specials" className="restaurant-specials"><div><span className="restaurant-kicker">FROM OUR KITCHEN</span><h2>Today’s specials</h2></div><div className="specials-list">{(restaurant?.specials||[]).map((special,i)=><article key={special}><span>0{i+1}</span><h3>{special.replace(/, \$[\d.]+$/,'')}</h3><strong>{special.match(/\$[\d.]+/)?.[0]}</strong></article>)}</div></section><section id="menu" className="restaurant-menu"><div className="restaurant-section-heading"><div><span className="restaurant-kicker">MADE FOR SHARING</span><h2>Find your favourite.</h2></div><p>All prices in USD.</p></div><div className="menu-categories" aria-label="Menu categories">{Object.entries(categories).map(([id,label])=><button key={id} aria-pressed={menuCategory===id} onClick={()=>setMenuCategory(id)}>{label}</button>)}</div><div className="restaurant-menu-grid">{(restaurant?.menu||[]).filter(d=>menuCategory==='all'||d.category===menuCategory).map(d=><article className={!d.available?'dish-unavailable':''} key={d.name}><div><h3>{d.name}</h3><p>{d.veg?'Vegetarian':'Non-vegetarian'}{d.spice!=='none'?' · '+d.spice+' spice':''}</p>{!d.available&&<small>Currently unavailable</small>}</div><strong>{usd(d.price_usd)}</strong></article>)}</div></section><section id="visit" className="restaurant-visit"><div><span className="restaurant-kicker">COME ON OVER</span><h2>We’ll save you a seat.</h2><p>{restaurant?.address}</p><a href="/voice"><Phone size={16}/>Speak with our receptionist</a></div><div><h3>Opening hours</h3><p>Daily · 11 am–3 pm & 6–11 pm</p><p>Weekend brunch · 7–10 am</p><small>Restaurant local time · {restaurant?.timezone}</small><button onClick={openChat}>Reserve a table <ArrowRight size={16}/></button></div></section><footer className="restaurant-footer"><span>{restaurant?.name||'Algo bites'} · Good food, good company.</span><a href="/">Staff sign in</a></footer></main><button className="chat-launcher" aria-label={chatOpen?'Minimize chat':'Chat with the restaurant'} aria-expanded={chatOpen} onClick={()=>chatOpen?setChatOpen(false):openChat()}>{chatOpen?<X size={21}/>:<><MessageCircle size={21}/><span>Let’s talk</span></>}</button>{chatOpen&&<div className="restaurant-chat-widget"><section className="chat-card" aria-label="Restaurant conversation"><div className="chat-heading"><span className="chat-avatar"><Leaf size={20}/></span><div><h2>{restaurant?.name||'Restaurant receptionist'}</h2><span>AI receptionist</span></div><button aria-label="Minimize chat window" onClick={()=>setChatOpen(false)}><X size={17}/></button><button className="chat-stop" disabled={!session||ended} onClick={stop}>Stop chat</button><button title="Start a new chat" aria-label="Start a new chat" disabled={busy} onClick={start}><RefreshCw size={17}/></button></div><div className="chat-history" role="log" aria-live="polite" aria-relevant="additions"><div className="chat-date">YOUR CONVERSATION</div>{messages.map((message,i)=><div key={i} className={`chat-message ${message.role}`}><small>{message.role==='user'?'YOU':'RECEPTIONIST'}</small><p>{message.text}</p>{message.sources?.length>0&&<small className="chat-source">Source: {message.sources.join(", ")}</small>}{message.phone&&<a className="staff-contact" href={`tel:${message.phone.replace(/[^+\d]/g,'')}`}><Phone size={15}/>{message.phone}</a>}</div>)}{busy&&<div className="chat-thinking" role="status">{session?'Receptionist is thinking…':'Connecting to the restaurant…'}</div>}<div ref={bottom}/></div>{messages.length===1&&!busy&&!error&&<div className="chat-suggestions">{['What are your opening hours?','Where can I park?','I’d like to book a table'].map(q=><button key={q} onClick={()=>send(q)}>{q}</button>)}</div>}{error&&<div className="chat-error" role="alert"><span>{error}</span><button onClick={()=>pending?send(pending.text,true):start()} disabled={busy}>{pending?'Retry message':'Reconnect'}</button>{pending&&<button disabled={busy} onClick={start}>New chat</button>}</div>}{ended&&<div className="chat-ended">This conversation has ended. <button onClick={start} disabled={busy}>Start a new chat</button></div>}<form className="chat-composer" onSubmit={e=>{e.preventDefault();send(text)}}><label className="sr-only" htmlFor="customer-message">Your message</label><input id="customer-message" ref={input} placeholder="How can we help you today?" maxLength={2000} value={text} disabled={busy||ended||!session||!!pending} onChange={e=>setText(e.target.value)}/><button aria-label="Send message" disabled={busy||ended||!session||!text.trim()||!!pending}><ArrowUp size={20}/></button></form><div className="chat-disclaimer">AI assistant · Please tell our staff about allergies.</div></section></div>}</div>
+}
