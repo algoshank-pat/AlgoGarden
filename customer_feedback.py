@@ -3,14 +3,22 @@ import re
 from local_audit import event,now
 
 OFFER='Thanks for calling. Before you go, would you feel comfortable taking a quick, optional survey?'
-RATING='Please rate this interaction from 1 to 5, where 1 is the lowest and 5 is the highest.'
+RATING='Was your experience good or bad?'
 
 
 def handle(session,text,unrecognized=False):
     state=session.survey
-    if state['status'] not in {'offered','awaiting_rating'}:return None
+    if state['status'] not in {'offered','awaiting_comment','awaiting_rating'}:return None
+    if state['status']=='awaiting_comment':
+        if unrecognized:return 'I didn\'t get that. Please repeat your feedback comment, or say skip.',[]
+        if text.strip().lower().rstrip('.!?') not in {'skip','no','no thanks','no comment'}:
+            state['comment']=text
+            event('feedback.comment',{'comment':text})
+        state['status']='awaiting_rating'
+        return RATING,[]
     from routing import required_handoff,keyword_intent
-    if not unrecognized and (required_handoff(text) or (keyword_intent(text)!='other' and not re.search(r'\b(rate|rating|interaction|experience|feedback|out of)\b',text,re.I))):
+    declining=bool(re.match(r'^\s*(?:no\b|nope\b|skip\b|not now\b)',text,re.I))
+    if not unrecognized and (required_handoff(text) or (not declining and keyword_intent(text)!='other' and not re.search(r'\b(rate|rating|interaction|experience|feedback|out of|good|bad)\b',text,re.I))):
         state.update(status='skipped',completed_at=now())
         event('feedback.skipped',{'reason':'customer_resumed_conversation'})
         return None
@@ -23,27 +31,29 @@ def handle(session,text,unrecognized=False):
         return session.farewell,[]
     if state['status']=='offered':
         if not unrecognized and re.match(r'^(yes|yeah|yep|sure|okay|ok|of course|happy to|i can)\b',t):
-            state.update(status='awaiting_rating',consented_at=now())
+            state.update(status='awaiting_comment' if state.get('expanded') else 'awaiting_rating',consented_at=now())
             event('feedback.consent',{})
+            if state.get('expanded'):
+                prompt=('Your next spoken feedback comment will be saved as a voice note and transcript. Say skip if you do not want to leave one.' if session.channel=='voice' else 'You can type a comment, record an optional voice note, or say skip.')
+                return 'What feedback would you like to leave? '+prompt+' Then I’ll ask whether your experience was good or bad.',[]
             return RATING,[]
         return 'Would you like to give feedback? Please say yes or no. You can skip it.',[]
-    # A scale reference is not a second rating. Ambiguous or non-integer answers
-    # never become a recorded score.
-    t=re.sub(r'\bout of (?:five|5)\b','',t)
-    numbers=re.findall(r'\b(?:\d+(?:\.\d+)?|zero|one|two|three|four|five|six|seven|eight|nine|ten)\b',text.lower() if re.search(r'\d\.\d',text) else t)
-    values={'one':1,'two':2,'three':3,'four':4,'five':5}
-    rating=values.get(numbers[0],int(numbers[0]) if numbers and numbers[0].isdigit() else None) if len(numbers)==1 else None
-    if not unrecognized and rating in range(1,6):
+    # Accept one explicit sentiment; do not translate numbers into feedback.
+    answers=set(re.findall(r'\b(?:good|bad)\b',t))
+    negated=bool(re.search(r'\b(?:not|wasnt|isnt|never)\s+(?:really\s+)?(?:good|bad)\b',t))
+    if not unrecognized and len(answers)==1 and not negated:
+        rating=answers.pop()
         state.update(status='completed',rating=rating,completed_at=now())
         session.bot.ended=True
         event('feedback.rated',{'rating':rating})
         return 'Thank you for your feedback. '+session.farewell,[]
-    return 'Please give one whole-number rating from 1 to 5, or say skip.',[]
+    return 'Please say good or bad, or say skip.',[]
 
 
-def offer(session):
+
+def offer(session,expanded=False):
     session.awaiting_more_help=False
     session.bot.ended=False
-    session.survey.update(status='offered',offered_at=now())
+    session.survey.update(status='offered',offered_at=now(),expanded=expanded)
     event('feedback.offered',{})
-    return OFFER,[]
+    return ('Before you go, would you like to leave an optional feedback comment or voice note and say whether your experience was good or bad?' if expanded else OFFER),[]

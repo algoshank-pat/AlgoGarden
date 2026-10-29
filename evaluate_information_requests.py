@@ -11,6 +11,7 @@ def main():
  out=ROOT/'results/information-requests'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S');data=out/'data';data.mkdir(parents=True)
  os.environ.update(RECEPTIONIST_FIXTURE_DIR=str(data),LANGSMITH_TRACING='false',RECEPTIONIST_DECISION_MODE='unified',RECEPTIONIST_DECISION_PROTOCOL='baseline',RECEPTIONIST_MCP_MODE='pooled')
  import chat_api as api,knowledge
+ api.restaurant={**api.restaurant,'phone_region':'IN','timezone':'Asia/Kolkata'}
  from fastapi.testclient import TestClient
  from receptionist import Tools
  tools=Tools(api.restaurant);business=tools.business_id;before=production_baseline();knowledge.ingest(api.restaurant['knowledge_id'])

@@ -1,9 +1,10 @@
-name: Algo bites
+name: Algo Garden
+id: 167d5d9de79fc75c
 currency: USD
 timezone: America/Chicago
 phone_region: US
 knowledge_id: malnad_mane
-cuisine: South Indian (Karnataka, Malnad and Mangalorean)
+cuisine: Indo-Italian (Indian flavours and Italian classics)
 address: "United States (street address not configured)"
 landmark: "Ask our staff for directions."
 phone: null
@@ -34,11 +35,20 @@ delivery:
 parking: "Two-wheeler parking in front; valet for cars on Friday to Sunday dinner."
 
 specials_of_the_day:
-  - "Neer dosa with chicken sukka combo, $19"
-  - "Kadubu with kai rasa (steamed rice dumplings with coconut curry), $14"
+  - "Tikka Masala Penne, $22"
+  - "Burrata Chaat, $16"
 
 menu:
-  # category: starters | mains | breads_rice | desserts | beverages
+  # Sample Indo-Italian menu, priced in USD. Dietary flags describe these demo recipes.
+  - {name: "Tomato Basil Risotto", description: "Creamy-textured rice with tomato, basil and olive oil, made without dairy.", category: mains, price_usd: 19, veg: true, vegan: true, gluten_free: true, spice: mild, allergens: [], available: true}
+  - {name: "Chickpea & Spinach Polenta", description: "Cornmeal polenta topped with chickpeas, spinach and Indian spices.", category: mains, price_usd: 20, veg: true, vegan: true, gluten_free: true, spice: medium, allergens: [], available: true}
+  - {name: "Peanut Chilli Spaghetti", description: "Wheat spaghetti tossed in a peanut and chilli sauce.", category: mains, price_usd: 21, veg: true, vegan: true, gluten_free: false, spice: hot, allergens: [gluten, peanuts], available: true}
+  - {name: "Burrata Chaat", category: starters, price_usd: 16, veg: true, spice: mild, allergens: [dairy], available: true}
+  - {name: "Saffron Arancini", category: starters, price_usd: 14, veg: true, spice: mild, allergens: [gluten, dairy], available: true}
+  - {name: "Tikka Masala Penne", category: mains, price_usd: 22, veg: true, spice: medium, allergens: [gluten, dairy, cashew], available: true}
+  - {name: "Tandoori Chicken Pizza", category: mains, price_usd: 24, veg: false, spice: medium, allergens: [gluten, dairy], available: true}
+  - {name: "Paneer Pesto Naan Pizza", category: mains, price_usd: 21, veg: true, spice: mild, allergens: [gluten, dairy, cashew], available: true}
+  - {name: "Cardamom Tiramisu", category: desserts, price_usd: 11, veg: true, spice: none, allergens: [gluten, dairy, eggs], available: true}
   - {name: "Gobi Manchurian", category: starters, price_usd: 9, veg: true, spice: medium, allergens: [gluten, soy], available: true}
   - {name: "Mushroom Pepper Fry", category: starters, price_usd: 11, veg: true, spice: hot, allergens: [], available: true}
   - {name: "Chicken Ghee Roast", category: starters, price_usd: 17, veg: false, spice: hot, allergens: [dairy], available: true}
@@ -59,7 +69,7 @@ menu:
   - {name: "Mysore Pak", category: desserts, price_usd: 7, veg: true, spice: none, allergens: [dairy], available: true}
   - {name: "Elaneer Payasam", category: desserts, price_usd: 9, veg: true, spice: none, allergens: [dairy, cashew], available: true}
   - {name: "Filter Coffee", category: beverages, price_usd: 4, veg: true, spice: none, allergens: [dairy], available: true}
-  - {name: "Fresh Lime Soda", category: beverages, price_usd: 5, veg: true, spice: none, allergens: [], available: true}
+  - {name: "Fresh Lime Soda", category: beverages, price_usd: 5, veg: true, vegan: true, gluten_free: true, spice: none, allergens: [], available: true}
 
 faqs:
   - q: Do you have Jain or no-onion-garlic food?

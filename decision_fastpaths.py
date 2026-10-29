@@ -14,6 +14,11 @@ def fields(bot,text):
     active=bot.reserving or bot.reservation_changes.active
     expected=getattr(bot,'_awaiting_slot',None)
     t=' '.join(text.lower().strip().rstrip('.!?').split())
+    if bot.reserving:
+        from name_spelling import spelled_name
+        spelling=spelled_name(text,getattr(bot,'slots',{}).get('name'))
+        if spelling is not None and spelling.pure:
+            return {'name':spelling.name} if spelling.name else {}
     if bot.reservation_changes.active and getattr(bot.reservation_changes,'selection_offered',False):
         from decision_evidence import selection
         choice=selection(text,True)

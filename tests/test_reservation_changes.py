@@ -19,6 +19,8 @@ def setup(tmp_path,monkeypatch):
     monkeypatch.setattr(app,'BOOKINGS_FILE',tmp_path/'bookings.jsonl')
     monkeypatch.setattr(app,'local_today',lambda r:date(2026,10,26))
     r=app.load_restaurant(app.HERE/'restaurants/demo_restaurant.yaml')
+    # These private phone fixtures deliberately use Indian national/E.164 forms.
+    r.update(phone_region='IN',timezone='Asia/Kolkata')
     r['seating']={**r['seating'],'seats_per_slot':4,'existing_bookings':{}}
     tools=app.Tools(r)
     booking=tools.book_table('Alex','9900112233',2,'2026-12-01','8 pm',request_key='original')

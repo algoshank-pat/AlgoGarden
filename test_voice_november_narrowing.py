@@ -1,4 +1,4 @@
-"""Synthetic caller speech: narrow November availability before checking; cancel the booking fixture."""
+"""Synthetic caller speech: fulfill availability enquiry without creating a booking."""
 import os
 import hashlib
 import io
@@ -61,16 +61,12 @@ def main():
             assert v['reply']=='Which date or short date range would you prefer, and around what time?'
             assert not v['structured']['tools_called']
             spoken=date.fromisoformat(selected).strftime('%B %d, %Y')
-            say(f'I would like a table for two on {spoken} at eight in the evening.')
-            say('No, I do not have a reservation.')
-            say(words+'.')
-            v=say('Alex.')
-            assert 'check_table' in v['structured']['tools_called'] and 'Is that correct?' in v['reply']
+            v=say(f'For two people on {spoken} at eight in the evening.')
+            assert v['structured']['tools_called']==['check_table'] and v['reply'].startswith('Yes,')
+            assert 'phone' not in v['reply'].lower()
             assert not rows()
-            say('Confirm.')
-            booked=rows();assert len(booked)==1 and booked[0]['date']==selected and booked[0]['time']=='20:00'
             say('Goodbye.')
-            report['checks']={'broad_request_asks_date_and_time':True,'no_tools_before_narrowing':True,'availability_after_narrowing':True,'confirmation_required':True,'correct_date_time_saved':True,'caller_and_reply_audio_generated':True}
+            report['checks']={'broad_request_asks_date_and_time':True,'no_tools_before_narrowing':True,'availability_after_narrowing':True,'original_enquiry_answered':True,'no_identity_requested':True,'no_reservations_created':True,'caller_and_reply_audio_generated':True}
             report['passed']=True
         finally:
             report['cleanup']=[]
@@ -80,6 +76,6 @@ def main():
             client.delete(f'/api/sessions/{sid}')
             (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     assert report['passed'] and all(x['cancelled'] for x in report['cleanup'])
-    print('PASS: November narrowing through synthetic speech; test booking cancelled.',flush=True)
+    print('PASS: November availability answered through synthetic speech; no booking created.',flush=True)
 
 if __name__=='__main__':main()

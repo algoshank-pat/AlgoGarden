@@ -67,3 +67,19 @@ import pytest as _pytest
 def legacy_component_contract(monkeypatch):
     """These mocks target the legacy individual component schemas; unified contracts have their own tests."""
     monkeypatch.setenv('RECEPTIONIST_DECISION_MODE','legacy')
+
+@pytest.mark.parametrize('question',['Does {dish} contain gluten?','Does {dish} have gluten?','Does {dish} include gluten?','Is there gluten in {dish}?'])
+@pytest.mark.parametrize('channel',['chat','voice'])
+def test_clear_named_allergen_question_is_answered_not_clarified(client,question,channel):
+    import chat_api as api
+    from tests.test_customer_feedback import say
+    from information_requests import pending_state
+    dish=next(d for d in api.restaurant['menu'] if d.get('available') and 'gluten' in d.get('allergens',[]))
+    sid=client.post('/api/sessions',json={'channel':channel}).json()['session_id'];b=api.sessions[sid].bot
+    original=pending_state(b);result=say(client,sid,question.format(dish=dish['name']))
+    assert f"{dish['name']} lists gluten as an allergen." in result['reply']
+    assert 'Are you asking about gluten-free' not in result['reply'] and pending_state(b)==original
+    assert result['routing']['intent']=='menu'
+    b.chat.assert_not_called()
+
+from tests.test_customer_feedback import client

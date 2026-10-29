@@ -84,7 +84,7 @@ class RoutingTests(unittest.TestCase):
         self.chat.return_value = response({'intent': 'policy'})
         with patch.object(self.bot.menu_agent, 'turn', return_value=('I’m not sure; please contact staff.', [])) as agent:
             reply, called = self.bot.turn('What is your corkage policy?')
-            agent.assert_called_once_with('What is your corkage policy?', max_steps=3, policy=True)
+            agent.assert_called_once_with('What is your corkage policy?', policy=True, direct=True)
         self.assertIn('not sure', reply)
         self.assertEqual(called, [])
 

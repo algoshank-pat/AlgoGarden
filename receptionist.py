@@ -226,14 +226,14 @@ class Tools:
         items = items[:6]
         return {"specials": self.r.get("specials_of_the_day", []),
                 "dishes": [{"name": d["name"], "price_usd": d["price_usd"], "veg": d["veg"],
-                            "available": d["available"]} for d in items]}
+                            "available": d["available"],"vegan":d.get("vegan"),"gluten_free":d.get("gluten_free"),"allergens":d.get("allergens",[])} for d in items]}
 
     @observed('check_dish', 'tool')
     def check_dish(self, name: str) -> dict:
         d = find_dish(self.r["menu"], name)
         if not d:
             return {"on_menu": False, "note": f"'{name}' is not on our menu."}
-        return {"on_menu": True, **{k: d[k] for k in ("name", "price_usd", "veg", "spice", "allergens", "available")}}
+        return {"on_menu": True, **{k: d[k] for k in ("name", "price_usd", "veg", "spice", "available")},"allergens":d.get('allergens'),"vegan":d.get("vegan"),"gluten_free":d.get("gluten_free"),"description":d.get("description"),"nut_free":d.get("nut_free")}
 
     def _booked_seats(self, d, hhmm):
         if self.r['seating'].get('duration_minutes'):
@@ -514,19 +514,16 @@ class MenuAgent:
             self.last_sources=[]
             return ('We have '+', '.join(f"{d['name']} for ${d['price_usd']}" for d in dishes)+'.' if dishes else 'Please ask staff about availability in that category.'),['get_menu']
         if policy:
-            result=self.tools.search_knowledge(query=user_text,k=2)
+            from policy_requests import retrieval_query,select_quotes
+            result=self.tools.search_knowledge(query=retrieval_query(user_text),k=4)
             self.last_sources=[]
             if not result.get('relevant'):return knowledge.FALLBACK,['search_knowledge']
-            chunks=result['chunks'][:2]
+            chunks=result['chunks'][:4]
             candidates=[{'source':chunk['source'],'text':sentence} for chunk in chunks for sentence in chunk.get('sentences',knowledge.sentences(chunk['text']))]
             schema={'type':'object','properties':{'quotes':{'type':'array','maxItems':2,'items':{'type':'object','properties':{'source':{'type':'string','enum':sorted({c['source'] for c in candidates})},'text':{'type':'string','enum':sorted({c['text'] for c in candidates})}},'required':['source','text'],'additionalProperties':False}}},'required':['quotes'],'additionalProperties':False}
             try:
                 if direct:
-                    words=set(re.findall(r'[a-z]+',user_text.lower()))-{'what','when','where','how','do','does','is','are','can','i','you','your','the','a','an','to','my','me','for','of','in','with','should','it','have','much','about'}
-                    for group in ({'dog','cat','pet','pets'},{'kid','kids','child','children'},{'wine','alcohol','alcoholic','corkage'},{'wear','dress','clothing'},{'wheelchair','access','step','free'}):
-                        if words&group:words|=group
-                    ranked=sorted(candidates,key=lambda c:len(words&set(re.findall(r'[a-z]+',c['text'].lower()))),reverse=True)
-                    selected=ranked[:1] if ranked and words&set(re.findall(r'[a-z]+',ranked[0]['text'].lower())) else []
+                    selected=select_quotes(user_text,candidates)
                     content=json.dumps({'quotes':selected})
                 else:
                     response=traced_chat(self.chat,model=self.model,think=False,format=schema,options={'temperature':0},messages=[
@@ -669,6 +666,12 @@ class Receptionist:
         self.menu_agent.last_sources = []
         if self.ended:
             return 'This call has been handed to staff.', []
+        from customer_intent import dietary_request,dietary_turn,declined_booking,abandon_draft
+        if declined_booking(user_text):
+            abandon_draft(self)
+            return "I'm sorry I couldn't help you find what you needed. No new reservation has been made.",[]
+        from dietary_menu import specific_question
+        if dietary_request(user_text) or specific_question(self.restaurant.get('menu',[]),user_text):return dietary_turn(self,user_text)
         if irrelevant_question(self,user_text):
             return IRRELEVANT_REPLY,[]
         if incomplete_request(user_text):
@@ -711,6 +714,10 @@ class Receptionist:
             decision=Decision(value['intent'],'unified_llm',value['relevance'],value['reason_summary'],value['confidence'],value['fields'])
             self.last_decision=decision
             if value['relevance']=='unrelated':
+                # Scope refusal wins over a contradictory model intent label.
+                # Preserve the raw model response in its existing trace event.
+                self.last_decision=Decision('other','unified_llm','unrelated',value['reason_summary'],value['confidence'],value['fields'])
+                event('routing.scope_enforced',{'model_intent':value['intent'],'effective_intent':'other','relevance':'unrelated'})
                 self.failures=0
                 return IRRELEVANT_REPLY,[]
             if value['relevance']=='unclear':return repeat_or_handoff(self)
@@ -738,11 +745,22 @@ class Receptionist:
             result = self.tools.get_hours(match.group(0) if match else '')
             if result.get('open') is False:
                 return f"We’re closed on {result['date']} ({result['day']}).", ['get_hours']
+            service=re.search(r'\b(brunch|lunch|dinner)\b',user_text,re.I)
+            if service:
+                name=service[1].lower();shift=result['shifts'].get(name)
+                if shift:
+                    days=f" ({', '.join(shift['days'])} only)" if shift.get('days') else ''
+                    return f"{name.capitalize()} is served from {shift['open']} to {shift['close']}{days}.",['get_hours']
+                return f"{name.capitalize()} service is not scheduled for that day.",['get_hours']
             shifts = '; '.join(f"{name} {s['open']} to {s['close']}" + (f" ({', '.join(s['days'])} only)" if s.get('days') else '') for name, s in result['shifts'].items())
             closing = f"Our weekly closing day is {result['weekly_off']}." if result['weekly_off'] else 'We are open every day.'
             return f"Our hours are {shifts}. {closing}", ['get_hours']
         if intent == 'location_parking':
             result = self.tools.get_location()
+            if not result.get('address') or 'not configured' in result['address'].lower():
+                if re.search(r'\b(address|where|location|directions|landmark)\b',user_text,re.I):
+                    parking=(' '+result['parking']) if result.get('parking') and re.search(r'\b(park|parking|valet)\b',user_text,re.I) else ''
+                    return 'A street address is not configured. The owner needs to supply the restaurant’s address; please contact the restaurant for directions.'+parking, ['get_location']
             return f"We’re at {result['address']}. {result.get('parking') or 'Please ask staff about parking.'}", ['get_location']
         if intent == 'reservation':
             if self.reservation_changes.active:
@@ -760,6 +778,8 @@ class Receptionist:
             result=self.tools.get_specials()
             return 'Today’s specials are '+', '.join(result.get('specials',[]))+'.',['get_specials']
         if intent == 'policy':
+            from information_requests import remember_readback
+            remember_readback(self)
             return self.menu_agent.turn(user_text, max_steps=max_steps, policy=True, **({'direct':True} if self.unified_decisions or decision.source=='llm' else {}))
         return self.menu_agent.turn(user_text, max_steps=max_steps, **({'direct':True} if self.unified_decisions or decision.source=='llm' else {}))
 
@@ -777,6 +797,17 @@ class Receptionist:
         choice=text.strip().lower().rstrip('.!').replace(',','')
         was_confirming=self.awaiting_confirmation
         previous_slots=dict(self.slots)
+        from name_spelling import spelled_name
+        spelling=spelled_name(text,self.slots.get('name'))
+        if spelling is not None:
+            self.awaiting_confirmation=False
+            self._information_readback=None
+            self._information_readback_state=None
+            if not spelling.name:
+                self.slots.pop('name',None)
+                self._awaiting_slot='name'
+                self.reserving=True
+                return 'Please spell your first name, say "last name," then spell your last name.',[]
         correction_field=next((field for field,pattern in [('time',r'\btime\b'),('date',r'\b(date|day)\b'),('name',r'\bname\b'),('phone',r'\b(phone|number)\b'),('party_size',r'\b(guests|people|party size)\b')]
                                if re.search(pattern,choice)),None)
         if was_confirming and correction_field and re.search(r'\b(change|correct|different|wrong)\b',choice):
@@ -792,7 +823,8 @@ class Receptionist:
                 return questions[correction_field],[]
         if self.awaiting_confirmation and (re.match(r'^no\b',choice) or choice in {'not correct','thats wrong'}):
             # Corrections containing a concrete new value still go through extraction.
-            if re.search(r'\b(to|instead|at)\b.*(?:\d|half past|tomorrow|next|pm|am)',choice):
+            from booking_evidence import explicit_fields
+            if explicit_fields(text) or re.search(r'\b(to|instead|at)\b.*(?:\d|half past|tomorrow|next|pm|am)',choice):
                 pass
             else:
                 self.awaiting_confirmation=False
@@ -823,7 +855,7 @@ class Receptionist:
                 # still rejects the same phone/date/time at commit.
             else:
                 return 'Would you like staff help with the existing reservation, or a separate booking?', []
-        if self.awaiting_confirmation and text.strip().lower().rstrip('.!').replace(',','') in {'yes', 'yes please', 'correct', "that's correct", 'confirm'}:
+        if self.awaiting_confirmation and text.strip().lower().rstrip('.!').replace(',','') in {'yes', 'yes please', 'correct', "that's correct", 'that is correct', 'yes that is correct', "yes that's correct", 'yes correct', 'confirm'}:
             event('reservation.confirmed')
             self.awaiting_confirmation = False
             result = self.tools.book_table(**self.slots)
@@ -843,6 +875,8 @@ class Receptionist:
         self.awaiting_confirmation = False
         selected=getattr(self,'_routed_fields',None)
         self._routed_fields=None
+        if spelling is not None and spelling.name:
+            selected={**(selected or {}),'name':spelling.name} if selected is not None or spelling.pure else None
         literal_phone=phone_from_utterance(text,self.restaurant.get('phone_region','IN'))
         if literal_phone and ('phone' not in self.slots or getattr(self,'_awaiting_slot',None)=='phone'):
             selected={**(selected or {}),'phone':literal_phone}
@@ -880,6 +914,21 @@ class Receptionist:
                 extracted = json.loads(response.message.content)
             if not isinstance(extracted, dict):
                 raise ValueError('Expected object')
+            if spelling is not None and spelling.name:
+                extracted['name']=spelling.name
+            from booking_evidence import explicit_fields
+            for field,literal in explicit_fields(text).items():
+                named=extracted.get('name')
+                if (field in {'date','time'} and named and literal.lower() in named.lower()
+                        and (getattr(self,'_awaiting_slot',None)=='name' or re.search(r'\b(name is|call me|put it under|use the name)\b',text,re.I))):
+                    continue
+                # Preserve an equivalent validated representation from the shared
+                # decision; recover missing or contradictory explicit values.
+                current=extracted.get(field)
+                equivalent=(current==literal)
+                if current and field=='time':equivalent=parse_time(str(current))==parse_time(literal)
+                if current and field=='date':equivalent=parse_date(str(current),today=local_today(self.restaurant))==parse_date(literal,today=local_today(self.restaurant))
+                if not equivalent:extracted[field]=literal
             literal_minutes=re.search(r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})\s+(?:fifteen|thirty|forty[ -]five)\b(?:\s+(?:in the |at )?(?:morning|afternoon|evening|night))?',text,re.I)
             if literal_minutes:extracted['time']=literal_minutes[0]
             for key in properties:
@@ -905,10 +954,10 @@ class Receptionist:
                 self.slots.pop('phone')
             else:
                 self.slots['phone'] = phone
-        if was_confirming and self.slots==previous_slots:
+        if was_confirming and self.slots==previous_slots and spelling is None:
             self.awaiting_confirmation=True
             return self._unclear_or_unrelated(text)
-        if (getattr(self,'_awaiting_slot',None) or getattr(self,'_offered_alternatives',None) or (previous_slots and 'time' not in previous_slots)) and self.slots==previous_slots:
+        if (getattr(self,'_awaiting_slot',None) or getattr(self,'_offered_alternatives',None) or (previous_slots and 'time' not in previous_slots)) and self.slots==previous_slots and spelling is None:
             return self._unclear_or_unrelated(text)
         self.failures = 0
         if 'phone' in self.slots:

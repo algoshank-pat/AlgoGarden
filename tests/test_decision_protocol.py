@@ -92,7 +92,7 @@ def compact_bot(monkeypatch,tmp_path):
 
 def test_private_public_turn_uses_one_flat_generation(compact_bot):
  b=compact_bot;b.chat.return_value=wire(party_size=4,date='tomorrow',time='eight thirty')
- reply,tools=b.turn('Could you fit four of us in tomorrow at quarter past eight?')
+ reply,tools=b.turn('Please book a table for four tomorrow at quarter past eight.')
  assert 'phone' in reply.lower() and b.slots['time']=='quarter past eight' and b.slots['party_size']==4
  b.chat.assert_called_once()
  assert b.chat.call_args.kwargs['format']==protocol.SCHEMA
@@ -113,9 +113,9 @@ def test_private_correction_keeps_original_until_confirmed(compact_bot):
 def test_private_policy_remains_grounded_with_one_generation(compact_bot):
  b=compact_bot;b.chat.return_value=wire(intent='policy')
  b.menu_agent.chat=Mock(side_effect=AssertionError('No second model call'))
- b.menu_agent.tools.search_knowledge=Mock(return_value={'relevant':True,'chunks':[{'source':'policy.md','text':'Pets are not permitted indoors.'}]})
- reply,tools=b.turn('Can I bring my dog?')
- assert reply=='Pets are not permitted indoors.' and tools==['search_knowledge']
+ b.menu_agent.tools.search_knowledge=Mock(return_value={'relevant':True,'chunks':[{'source':'policy.md','text':'Gift vouchers require advance arrangements.'}]})
+ reply,tools=b.turn('Do you offer gift vouchers?')
+ assert reply=='Gift vouchers require advance arrangements.' and tools==['search_knowledge']
  assert b.menu_agent.last_sources==['policy.md'];b.chat.assert_called_once();b.menu_agent.chat.assert_not_called()
 
 def test_invalid_wire_is_not_retried_or_written(compact_bot):

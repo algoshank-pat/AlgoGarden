@@ -24,7 +24,7 @@ def bot(monkeypatch,tmp_path):
 
 def test_create_routes_and_extracts_once_without_second_judge(bot):
     bot.chat.return_value=response(date='tomorrow',time='8 pm',party_size=2)
-    reply,tools=bot.turn('Could you fit two of us in tomorrow at eight in the evening?')
+    reply,tools=bot.turn('Please book a table for two tomorrow at eight in the evening.')
     assert 'phone' in reply.lower() and not bot.ended
     bot.chat.assert_called_once()
     assert bot.chat.call_args.kwargs['format']==SCHEMA
@@ -106,11 +106,11 @@ def test_multifield_correction_is_not_overwritten_by_time_fast_path(bot):
     bot.tools.check_table.assert_called_once_with(4,'tomorrow','quarter past eight')
 
 
-def test_menu_dish_uses_decision_fields_without_second_generation(bot):
+def test_menu_allergen_fact_needs_no_generation(bot):
     bot.chat.return_value=response(intent='menu',dish='Masala Dosa')
     reply,tools=bot.turn('Does Masala Dosa contain allergens?')
     assert tools==['check_dish'] and 'dairy' in reply
-    bot.chat.assert_called_once()
+    bot.chat.assert_not_called()
 
 
 def test_explicit_reservation_selection_needs_no_inference(bot):
@@ -144,10 +144,10 @@ def test_api_retries_reuse_unified_decision(bot,monkeypatch,tmp_path,channel):
 def test_policy_answer_uses_grounded_sources_without_second_generation(bot):
     bot.chat.return_value=response(intent='policy')
     bot.menu_agent.chat=Mock(side_effect=AssertionError('No answer-generation call after decision'))
-    bot.menu_agent.tools.search_knowledge=Mock(return_value={'relevant':True,'chunks':[{'source':'pets.md','text':'Pets are not permitted indoors.'}]})
-    reply,tools=bot.turn('Can I bring my pet?')
-    assert reply=='Pets are not permitted indoors.' and tools==['search_knowledge']
-    assert bot.menu_agent.last_sources==['pets.md']
+    bot.menu_agent.tools.search_knowledge=Mock(return_value={'relevant':True,'chunks':[{'source':'vouchers.md','text':'Gift vouchers require advance arrangements.'}]})
+    reply,tools=bot.turn('Do you offer gift vouchers?')
+    assert reply=='Gift vouchers require advance arrangements.' and tools==['search_knowledge']
+    assert bot.menu_agent.last_sources==['vouchers.md']
     bot.chat.assert_called_once()
     bot.menu_agent.chat.assert_not_called()
 
@@ -165,3 +165,16 @@ def test_invalid_explicit_date_is_not_silently_dropped(bot):
     with turn_context(bot,'2026-99-99 at 8 pm'):
         value=decide(bot,'2026-99-99 at 8 pm')
     assert value['fields']['date']=='2026-99-99'  # business validation must reject this proposal
+
+@pytest.mark.parametrize('raw_intent',['reservation','policy','menu','hours'])
+def test_unrelated_scope_refusal_overrides_contradictory_intent(bot,raw_intent):
+    import copy
+    bot.reserving=True;bot._awaiting_slot='phone';bot.slots={'date':'2027-01-12','time':'19:00','party_size':2}
+    original=copy.deepcopy(bot.slots)
+    bot.chat.return_value=response(relevance='unrelated',intent=raw_intent)
+    bot.tools.book_table=Mock(side_effect=AssertionError('Unrelated input cannot write'))
+    reply,tools=bot.turn('Who is Albert Einstein?')
+    assert reply=="I can't help you with this question." and tools==[]
+    assert bot.last_decision.intent=='other' and bot.last_decision.reason=='unrelated'
+    assert bot.slots==original and bot.reserving and not bot.ended
+    bot.chat.assert_called_once();bot.tools.book_table.assert_not_called()

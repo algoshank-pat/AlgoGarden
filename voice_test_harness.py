@@ -146,7 +146,7 @@ def execute_suite(update=lambda value:None):
                             [sys.executable,'-m','pytest','tests/test_chat_api.py','tests/test_routing.py',
                              'tests/test_returning_customer.py','tests/test_reservation_changes.py',
                              'tests/test_reservation_alternatives.py','tests/test_booking_db.py',
-                             'tests/test_booking_dates.py','tests/test_booking_context.py','tests/test_in_person_cutoff.py','tests/test_reservation_schedule.py','tests/test_decision_engine.py','tests/test_decision_protocol.py','tests/test_customer_feedback.py','tests/test_input_decisions.py','tests/test_live_no_correction.py','tests/test_speech_text.py','-q'])
+                             'tests/test_booking_dates.py','tests/test_booking_context.py','tests/test_in_person_cutoff.py','tests/test_reservation_schedule.py','tests/test_decision_engine.py','tests/test_decision_protocol.py','tests/test_customer_feedback.py','tests/test_input_decisions.py','tests/test_live_no_correction.py','tests/test_speech_text.py','tests/test_mcp_pool.py','tests/test_information_requests.py','tests/test_policy_routing.py','tests/test_dietary_intent_feedback.py','-q'])
                         log_path=run_dir/f'{index+1:02d}.log'
                         with log_path.open('w',encoding='utf-8') as log:
                             completed=subprocess.run(command,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,

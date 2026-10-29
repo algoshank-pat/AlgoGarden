@@ -105,6 +105,13 @@ def search(business: str, query: str, k: int = 4) -> dict:
         if not math.isfinite(threshold) or not 0 <= threshold <= 1:
             raise ValueError('Invalid relevance threshold')
         docs = source_documents(business)
+        from policy_faq import lookup as faq_lookup
+        faq=faq_lookup(business,query,docs)
+        if faq is not None:
+            faq['chunks']=faq['chunks'][:k]
+            event('knowledge.faq_hit',{'business':business,'sources':[c['source'] for c in faq['chunks']],'source_digest':faq['source_digest'],'embeddings':False,'generation':False})
+            event('knowledge.retrieved',{'sources':[c['source'] for c in faq['chunks']],'scores':[],'relevant':True,'mode':'source_faq_cache'})
+            return faq
         collection = chroma_client().get_collection(collection_name(business), embedding_function=None)
         metadata = collection.metadata or {}
         if metadata.get('state') != 'ready' or metadata.get('digest') != digest(docs) or metadata.get('embedding_model') != EMBED_MODEL or metadata.get('business') != business:

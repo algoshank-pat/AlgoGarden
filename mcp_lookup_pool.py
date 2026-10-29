@@ -89,10 +89,10 @@ class Worker:
   if self.loop and self.task and self.current is not None:
    try:self.loop.call_soon_threadsafe(self.task.cancel)
    except RuntimeError:pass
- def close(self):
+ def close(self,timeout=5):
   started=time.perf_counter()
   self.stop()
-  self.thread.join(timeout=5)
+  self.thread.join(timeout=timeout)
   if self.thread.is_alive():raise LookupUnavailable('MCP worker cleanup did not finish')
   path=(self.parameters.env or {}).get('RECEPTIONIST_MCP_METRICS')
   if path:
@@ -103,7 +103,8 @@ class LookupPool:
   self.max_scopes=max_scopes;self.idle_seconds=idle_seconds;self.workers={};self.lock=threading.Lock();self.closed=False
  def lookup(self,key,parameters,decode,phone,request_id,timeout=20):
   deadline=time.perf_counter()+timeout
-  with self.lock:
+  if not self.lock.acquire(timeout=max(0,deadline-time.perf_counter())):raise TimeoutError('MCP pool wait exceeded deadline')
+  try:
    if self.closed:raise LookupUnavailable('MCP pool is closed')
    for scope,worker in list(self.workers.items()):
     if not worker.thread.is_alive():del self.workers[scope]
@@ -113,10 +114,11 @@ class LookupPool:
     if len(self.workers)>=self.max_scopes:
      idle=next(((k,w) for k,w in self.workers.items() if w.current is None and w.jobs.empty()),None)
      if idle is None:raise LookupUnavailable('MCP scope limit reached')
-     idle[1].close();del self.workers[idle[0]]
+     idle[1].close(timeout=max(0,min(5,deadline-time.perf_counter())));del self.workers[idle[0]]
     worker=Worker(parameters,decode,self.idle_seconds);self.workers[key]=worker
    future=worker.submit(phone,request_id,deadline)
-  try:return future.result(timeout=max(.001,deadline-time.perf_counter()))
+  finally:self.lock.release()
+  try:return future.result(timeout=max(0,deadline-time.perf_counter()))
   except concurrent.futures.TimeoutError:
    future.cancel()
    # A timed-out operation never lends its session to another caller.

@@ -232,3 +232,18 @@ Every turn response includes a versioned structured object with session_id, requ
 - Automated active-call regression with real speech services and simulated devices passed: dialing, transcript previews, distinct speaker styles, mute/unmute, no duplicate turns, playback echo guard and microphone cleanup.
 - Full `pytest tests -q`: 511 passed, 11 failed, 11 subtests passed. Remaining failures are in decision-engine/protocol and latency-path expectations, reservation changes, restaurant clock and returning-customer tests. Several retain India-specific phone/timezone assumptions; others require reconciliation with availability-only or current menu/extraction behavior. The full suite is not currently green.
 - Physical laptop microphone/speaker behavior is not established by the simulated-device regression.
+
+
+### Fast pet-policy FAQ
+
+Simple pet-permission questions now use a source-backed in-memory FAQ cache inside `search_knowledge`. The answer still comes from the restaurant's policy Markdown and is returned as a complete verified source sentence, with citations and `retrieval_mode: source_faq_cache`. This path requires no LLM generation, embedding model or vector database, including on its first lookup. Cached facts are keyed by restaurant/knowledge scope and source content; edits or deletion cannot reuse stale answers. Assistance/service/guide-animal questions select the staff-contact condition rather than the ordinary-pet restriction. Questions about unlisted details (outdoor areas, fees, documentation) and mixed topics retain the regular policy path. Cache tests and API timing evidence are in `results/policy-faq/`.
+
+### Accuracy and connection reuse (October 28, 2026)
+
+Named-dish prices, dairy questions and complete allergen lists use configured menu facts and `check_dish`; missing allergen information is not treated as an allergy-safety guarantee. Service start/finish questions use configured shifts through `get_hours`, including during booking field collection. The street address is still unconfigured and requires owner input.
+
+Recognized single-topic FAQs now also cover stored late-arrival, cancellation-notice, outside-cake/alcohol, high-chair, payment, separate-bill, accessibility and dress-code facts. The cache stores exact source sentences keyed by business and complete source content. Conditions and citations remain in grounded policy answers; uncovered facets and mixed topics retain retrieval. Neither availability nor reservation writes are cached.
+
+Literal date, time and party-size evidence recovers omitted explicit booking fields without another generation. Equivalent parsed values retain their existing representation; explicit names are not interpreted as dates or times. Spoken corrections after rejecting a readback receive a fresh readback and require confirmation before saving. MCP lookups default to scoped connection reuse with fresh database reads; `RECEPTIONIST_MCP_MODE=oneshot` remains available.
+
+Model weights, model selection, inference settings, baseline decision prompt/schema and compact-protocol settings are unchanged. Private implementation evidence and the source manifest are in `results/accuracy-fixes-20261028/`. These targeted development checks do not replace independent customer acceptance testing.

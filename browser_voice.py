@@ -17,7 +17,7 @@ ROOT = Path(__file__).parent
 MAX_AUDIO = 16000 * 2 * 30 + 44
 
 
-def transcribe_wav(data):
+def transcribe_wav(data, survey_answer=False):
     import numpy as np
     from voice.adapters import ParakeetTranscriber
     from voice.interfaces import CapturedAudio, PhoneNumberUnclear
@@ -37,7 +37,12 @@ def transcribe_wav(data):
         if transcriber is None:
             transcriber = ParakeetTranscriber(ROOT)
         try:
-            text = transcriber.transcribe(CapturedAudio(np.frombuffer(frames, dtype='<i2').astype('float32') / 32768))
+            samples=np.frombuffer(frames,dtype='<i2').astype('float32')/32768
+            text = transcriber.transcribe(CapturedAudio(samples))
+            if survey_answer:
+                from voice.survey_recognition import recognize
+                try:text=recognize(samples,text,ROOT)
+                except (OSError,RuntimeError):pass
         except PhoneNumberUnclear:
             return {'text': '', 'input_kind': 'unrecognized_audio', 'engine': 'Parakeet'}
         return {'text': text, 'input_kind': 'text' if text.strip() else 'unrecognized_audio', 'engine': 'Parakeet'}
@@ -46,13 +51,20 @@ def transcribe_wav(data):
 
 
 @router.post('/transcribe')
-async def transcribe(request: Request):
+async def transcribe(request: Request, session_id: str | None = None):
     data = bytearray()
     async for chunk in request.stream():
         data.extend(chunk)
         if len(data) > MAX_AUDIO:
             raise HTTPException(413, 'Recording must be at most 30 seconds.')
-    return await run_in_threadpool(transcribe_wav, bytes(data))
+    survey_answer=False
+    if session_id:
+        from uuid import UUID
+        from chat_api import sessions
+        try:session=sessions.get(UUID(session_id))
+        except ValueError:raise HTTPException(422,'Invalid session ID.')
+        survey_answer=bool(session and not session.stopped and not session.bot.ended and session.survey.get('status')=='awaiting_rating')
+    return await run_in_threadpool(transcribe_wav,bytes(data),survey_answer)
 
 
 class SpeechRequest(BaseModel):

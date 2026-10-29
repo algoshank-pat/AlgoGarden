@@ -77,6 +77,14 @@ def test_metrics_never_record_phone(fixture):
  store,_,path=fixture;client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112233')
  assert '9900112233' not in (path/'metrics.jsonl').read_text()
 
+def test_pool_is_default_and_remains_a_fresh_read(fixture,monkeypatch):
+ store,ids,_=fixture;monkeypatch.delenv('RECEPTIONIST_MCP_MODE',raising=False)
+ assert client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112233')['found']
+ worker=next(iter(client._pool.workers.values()))
+ store.change('a',ids['a','9900112233'],'9900112233','cancel',1,{},40,0,'private-default-cancel')
+ assert not client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112233')['found']
+ assert next(iter(client._pool.workers.values())) is worker
+
 def test_host_exit_closes_child_without_waiting_idle_ttl(fixture):
  store,_,path=fixture
  code='from pathlib import Path;from booking_db import BookingStore;from reservation_mcp_client import lookup_reservations_by_phone;print(lookup_reservations_by_phone(BookingStore(Path('+repr(str(store.path))+')),"a","2026-10-28","9900112233")["found"])'
@@ -120,3 +128,20 @@ def test_invalid_phone_never_replays_previous_results(fixture):
  with pytest.raises(RuntimeError):client.lookup_reservations_by_phone(store,'a','2026-10-28','invalid-phone')
  assert client.lookup_reservations_by_phone(store,'a','2026-10-28','9900112244')['reservations'][0]['id']==ids['a','9900112244']
  assert next(iter(client._pool.workers.values())) is worker
+
+@pytest.mark.parametrize('change',[{'business_id':'other'},{'date':'2026-10-01'},{'status':'cancelled'},{'phone':'9900112244'}])
+def test_scoped_response_validation_rejects_crossed_results(change):
+ row={'business_id':'a','date':'2026-11-01','status':'active','phone':'9900112233',**change}
+ with pytest.raises(ValueError):client.scoped({'found':True,'reservations':[row]},'a','2026-10-28','9900112233','IN')
+
+def test_pool_lock_wait_is_inside_total_deadline():
+ from mcp_lookup_pool import LookupPool
+ pool=LookupPool()
+ with ThreadPoolExecutor(max_workers=1) as executor:
+  pool.lock.acquire()
+  try:
+   future=executor.submit(pool.lookup,('private',),None,None,'9900112233','deadline',.05)
+   with pytest.raises(TimeoutError):future.result(timeout=.5)
+   assert future.done()
+  finally:pool.lock.release()
+ assert not pool.workers

@@ -45,7 +45,7 @@ atexit.register(close_mcp_connections)
 
 
 def lookup_reservations_by_phone(store, business_id, today, phone):
-    if os.getenv('RECEPTIONIST_MCP_MODE','oneshot')=='pooled':
+    if os.getenv('RECEPTIONIST_MCP_MODE','pooled')=='pooled':
         global _pool
         from mcp_lookup_pool import LookupPool
         started=time.perf_counter();request_id=str(uuid4())
@@ -63,7 +63,10 @@ def lookup_reservations_by_phone(store, business_id, today, phone):
         try:value=scoped(value,business_id,today,phone,store.phone_region)
         except (ValueError,KeyError,TypeError):
             pool.retire(key)
+            from local_audit import event
+            event('mcp.lookup.failed',{'total_ms':(time.perf_counter()-started)*1000,'phase':'scope_validation','request_id':request_id})
             raise
+        metrics['request_id']=request_id
         metrics['total_ms']=(time.perf_counter()-started)*1000
         from local_audit import event
         event('mcp.lookup.timings',metrics)
@@ -95,6 +98,7 @@ def lookup_reservations_by_phone(store, business_id, today, phone):
                     cleanup_started=time.perf_counter()
         metrics['cleanup_ms']=(time.perf_counter()-cleanup_started)*1000
         metrics['total_ms']=(time.perf_counter()-started)*1000
+        metrics['request_id']=request_id
         from local_audit import event
         event('mcp.lookup.timings',metrics)
         if os.getenv('RECEPTIONIST_MCP_METRICS'):

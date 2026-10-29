@@ -34,21 +34,21 @@ def begin(c,channel='voice'):
 @pytest.mark.parametrize('channel',['voice','chat'])
 def test_consent_rating_persisted_by_call_after_session_deleted(client,channel):
  sid=begin(client,channel)
- assert say(client,sid,'4')['survey']['rating'] is None
+ assert say(client,sid,'good')['survey']['rating'] is None
  assert say(client,sid,'Yes, please')['reply']==RATING
- payload={'request_id':str(uuid4()),'text':'I would give you four out of five'}
+ payload={'request_id':str(uuid4()),'text':'It was good'}
  a=client.post(f'/api/sessions/{sid}/turns',json=payload).json()
  b=client.post(f'/api/sessions/{sid}/turns',json=payload).json()
  assert a['structured']['output']['survey']==a['survey']
- assert a==b and a['survey']['rating']==4 and a['ended'] and not a['handoff']
+ assert a==b and a['survey']['rating']=='good' and a['ended'] and not a['handoff']
  assert not any(c['component']=='ollama.chat' for c in a['structured']['calls'])
  client.delete(f'/api/sessions/{sid}')
  row=next(c for c in client.get('/api/owner/dashboard').json()['calls'] if c['id']==sid)
- assert row['feedback']['rating']==4 and row['intent']=='hours' and row['outcome']=='Answered'
+ assert row['feedback']['rating']=='good' and row['intent']=='hours' and row['outcome']=='Answered'
  assert sum(e['name']=='feedback.rated' for e in row['events'])==1
 
 @pytest.mark.parametrize('channel',['voice','chat'])
-@pytest.mark.parametrize('rating',['0','6','4.5','four or five','excellent',''])
+@pytest.mark.parametrize('rating',['0','5','4.5','good or bad','not good','excellent',''])
 def test_invalid_score_is_not_saved(client,rating,channel):
  sid=begin(client,channel);say(client,sid,'Yes')
  v=say(client,sid,rating or ('[No intelligible speech detected]' if channel=='voice' else '...'),**({'input_kind':'unrecognized_audio'} if not rating and channel=='voice' else {}))
@@ -56,8 +56,8 @@ def test_invalid_score_is_not_saved(client,rating,channel):
  assert say(client,sid,'Skip')['ended']
 
 @pytest.mark.parametrize('channel',['voice','chat'])
-@pytest.mark.parametrize('rating',range(1,6))
-def test_whole_number_scale(client,rating,channel):
+@pytest.mark.parametrize('rating',['good','bad'])
+def test_good_or_bad_response(client,rating,channel):
  sid=begin(client,channel);say(client,sid,'Sure')
  v=say(client,sid,str(rating));assert v['ended'] and v['survey']['rating']==rating
 
@@ -83,8 +83,8 @@ def test_hard_stop_does_not_offer_survey(client):
 
 def test_natural_rating_can_mention_booking_experience(client):
  sid=begin(client);say(client,sid,'Yes')
- v=say(client,sid,'I would rate my booking experience four out of five')
- assert v['ended'] and v['survey']['rating']==4
+ v=say(client,sid,'My booking experience was good')
+ assert v['ended'] and v['survey']['rating']=='good'
 
 
 def test_staff_handoff_also_offers_optional_survey(client):
