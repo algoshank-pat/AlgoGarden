@@ -5,8 +5,8 @@ timezone: America/Chicago
 phone_region: US
 knowledge_id: malnad_mane
 cuisine: Indo-Italian (Indian flavours and Italian classics)
-address: "United States (street address not configured)"
-landmark: "Ask our staff for directions."
+address: "123 Demo Garden Lane, Springfield, IL 62701, United States (fictional demo address for the course; not a real restaurant location)"
+landmark: "Course demo only; no real-world directions are available."
 phone: null
 maps_link: null
 

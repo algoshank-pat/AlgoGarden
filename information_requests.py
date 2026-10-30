@@ -19,7 +19,7 @@ def readonly_info_intent(text):
  from routing import required_handoff
  if required_handoff(text) or re.search(BOOK_COMMAND,text,re.I):return None
  question=bool('?' in text or re.search(r'\b(what|where|when|how|can|could|may|do|does|is|are|tell)\b',text,re.I))
- if question and re.search(r'\b(parking|park|valet|address|directions|location|landmark)\b',text,re.I):return 'location_parking'
+ if question and (re.search(r'\b(parking|park|valet|address|directions|location|landmark)\b',text,re.I) or re.search(r'\bwhere\s+is\s+(?:the|your)\s+restaurant\b|\bhow\s+(?:do|can)\s+(?:i|we)\s+get\s+there\b',text,re.I)):return 'location_parking'
  if question and re.search(r'\b(hours|opening time|closing time)\b',text,re.I):return 'hours'
  if (question and re.search(r'\b(brunch|lunch|dinner)\b',text,re.I)
      and not re.search(r'\b(tables?|seats?|availability|available|free|room|space)\b',text,re.I)
