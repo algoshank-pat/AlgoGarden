@@ -67,7 +67,7 @@ Vite serves the UI on **5173** and proxies `/api` to FastAPI on **8010**. Ollama
 - Shows owner reservation planning, daily utilization, channel colors and guest names, plus actionable follow-up summaries and notes.
 - Supports app-only voice mute, separate caller/agent transcript colors and optional good/bad feedback.
 
-The current configuration is **Algo Garden**, USD, `America/Chicago`, ten four-seat tables and 90-minute stays. Lunch is 11 am–3 pm, dinner 6–11 pm, and weekend brunch 7–10 am. A complete stay must fit within service hours.
+The current restaurant configuration is **Masala Mozzarella** (served by the Algo Garden AI receptionist), USD, `America/Chicago`, ten four-seat tables and 90-minute stays. Lunch is 11 am–3 pm, dinner 6–11 pm, and weekend brunch 7–10 am. A complete stay must fit within service hours.
 
 ## Run locally on Windows
 
