@@ -27,6 +27,7 @@ def spoken_time(hour,minute):
 
 
 def natural_speech(text):
+    text=re.sub(r"\bSaffron\s*&\s*Basil\b", "Saffron and Basil", text)
     def iso(match):
         try:return spoken_date(match[0])
         except ValueError:return match[0]
