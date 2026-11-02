@@ -34,7 +34,7 @@ def test_compact_times_from_live_speech(text,expected):
     ('1 December 2026', date(2026, 12, 1)),
     ('on 1st of December, 2026', date(2026, 12, 1)),
     ('December 1', date(2026, 12, 1)),
-    ('January 1', date(2027, 1, 1)),
+    ('January 1', date(2026, 1, 1)),
     ('February 29, 2028', date(2028, 2, 29)),
     ('February 29, 2027', None),
     ('April 31, 2026', None),

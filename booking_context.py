@@ -2,6 +2,20 @@
 import re
 
 
+def selected_booking_request(bot,text):
+    """Only a closed reference to this session's checked offer can reuse its fields.
+
+    This carries intent into normal extraction; availability is checked again
+    before the final readback and on the actual confirmed database write.
+    """
+    offer=getattr(bot,'_available_offer',None)
+    if not offer or offer['business_id']!=bot.tools.business_id:return None
+    t=' '.join(text.lower().replace('’',"'").strip().rstrip('.!?').split())
+    if not re.fullmatch(r"(?:(?:please|i would like to|we would like to|i'd like to|we'd like to|i want to|we want to|can i|can we) )?(?:book|reserve) (?:that table|the table|that slot|that time|it)(?: please)?",t):return None
+    f=offer['fields']
+    return f"Book a table for {f['party_size']} on {f['date']} at {f['time']}."
+
+
 def suggest_booking(bot,text):
     context=getattr(bot,'_availability_context',None)
     if not context or getattr(getattr(bot,'last_decision',None),'intent',None)!='reservation':return None

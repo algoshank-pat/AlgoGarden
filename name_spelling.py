@@ -10,6 +10,18 @@ class Spelling:
     name: str | None
     pure: bool
 
+def spelled_components(text):
+    """Explicit first/last spelling can arrive in separate voice turns."""
+    groups=list(re.finditer(r'\b(?:(?:my|the)\s+)?(first name|last name|surname)\s*(?:is|:)?\s*',text,re.I))
+    if not groups:return None
+    result={}
+    for i,g in enumerate(groups):
+        key='last' if g[1].lower() in {'last name','surname'} else 'first'
+        value=_letters(text[g.end():groups[i+1].start() if i+1<len(groups) else len(text)])
+        if value is None or key in result:return None
+        result[key]=value
+    return result
+
 def _letters(value):
     # Spoken phonetic examples are evidence only when their initial agrees.
     value=re.sub(r'^\s*(?:is\s+)?spell(?:ed|ing)?\s*(?:as\s+)?[:,-]?\s*','',value,flags=re.I)
@@ -17,9 +29,12 @@ def _letters(value):
     invalid = False
     def example(m):
         nonlocal invalid
-        invalid |= m[1].lower() != m[2][0].lower()
-        return m[1]
-    value = re.sub(r'\b([a-z])\s+as\s+in\s+([a-z]+)\b', example, value, flags=re.I)
+        token=m[1].lower();letter=token if len(token)==1 else ALIASES.get(token,NATO.get(token))
+        invalid |= letter != m[2][0].lower()
+        return letter or '?'
+    # ASR commonly hears "as in" as "as an". Accept that connector only
+    # when the explicit letter and example initial corroborate each other.
+    value = re.sub(r'\b([a-z]+)\s+(?:(?:as|is)\s+(?:in|an)|for)\s+([a-z]+)\b', example, value, flags=re.I)
     words = re.findall(r"[a-z]+", value.lower())
     while words and words[-1] in {'please','thanks','and'}: words.pop()
     if invalid or len(words)<2: return None
@@ -35,7 +50,9 @@ def spelled_name(text, current=None):
     cue=bool(re.search(r'\bspell(?:ed|ing)?\b',t))
     groups=list(re.finditer(r'\b(?:(?:my|the)\s+)?(first name|last name|surname)\s*(?:is|:)?\s*',t))
     raw_letters=bool(re.search(r'\b[a-z](?:\s*[-,.]\s*|\s+)[a-z](?:\s*[-,.]\s*|\s+)[a-z]\b',t))
-    if not cue and not raw_letters: return None
+    if not cue and not raw_letters:
+        # In an explicitly labelled spelling, phonetic words are letter evidence.
+        if not groups or not all(_letters(t[g.end():groups[i+1].start() if i+1<len(groups) else len(t)]) for i,g in enumerate(groups)):return None
     pure=not bool(re.search(r'\d|\b(time|date|tomorrow|today|tonight|guests?|people|party|phone|at|o.clock|past|quarter|saturday|sunday|monday|tuesday|wednesday|thursday|friday)\b',t))
     if groups:
         parts={}

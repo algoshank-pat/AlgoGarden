@@ -61,5 +61,5 @@ def test_piper_wav_output_and_backpressure(monkeypatch):
         assert response.status_code == 200 and response.headers['content-type'] == 'audio/wav'
         with wave.open(io.BytesIO(response.content)) as output:
             assert output.getframerate() == 22050 and output.getnframes() == 100
-        with voice.audio_lock:
+        with voice.speech_lock:
             assert api.post('/api/voice/speak', json={'text': 'Hello'}).status_code == 503

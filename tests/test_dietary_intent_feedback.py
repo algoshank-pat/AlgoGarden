@@ -20,8 +20,9 @@ def test_exact_failure_and_feedback(client,channel):
  first=say(client,sid,'Before the reservation, can you tell me if your restaurant has gluten fillery options?')
  assert 'gluten-free' in first['reply'] and 'Gobi' not in first['reply'] and 'phone' not in first['reply'].lower()
  answer=say(client,sid,'Do you have gluten-free options?')
- assert 'no gluten listed' in answer['reply'] and 'cross-contact' in answer['reply'] and 'Gobi' not in answer['reply'] and 'Prawns' not in answer['reply']
- assert 'reservation?' in answer['reply']
+ assert 'Tomato Basil Risotto' in answer['reply'] and 'Chickpea & Spinach Polenta' in answer['reply']
+ assert 'cross-contact' in answer['reply'] and 'Gobi' not in answer['reply'] and 'Prawns' not in answer['reply']
+ assert 'check_dish' in answer['structured']['tools_called'] and not b.reserving
  add=say(client,sid,'Add these gluten free options.')
  assert 'have not added' in add['reply']
  end=say(client,sid,"No, that's it. Since you could not tell me if these are gluten-free options, I do not want to book a reservation today.")
@@ -32,8 +33,9 @@ def test_exact_failure_and_feedback(client,channel):
  assert c['survey']['comment']=='You did not answer my gluten-free booking question.'
  assert c['survey']['status']=='awaiting_rating'
  assert say(client,sid,'six')['survey']['rating'] is None
- last=say(client,sid,'four')
- assert last['survey']['rating']==4 and last['ended']
+ assert say(client,sid,'four')['survey']['rating'] is None
+ last=say(client,sid,'good')
+ assert last['survey']['rating']=='good' and last['ended']
  records=api.audit.read(api.audit.CALLS_FILE)
  assert records[-1]['session_id']==sid and records[-1]['result']['survey']['comment']==c['survey']['comment']
  b.tools.book_table.assert_not_called();b.chat.assert_not_called()
@@ -88,9 +90,9 @@ def test_skip_and_decline_optional_feedback(client):
  assert say(client,sid,'skip')['ended']
 
 @pytest.mark.parametrize('query,expected,excluded',[
- ('Is Gobi Manchurian gluten-free?','lists gluten','Yes,'),
- ('Is Mushroom Pepper Fry gluten free?','does not certify','Yes,'),
- ('I have coeliac disease. Are these dishes safe?','cannot confirm','Yes,'),
+ ('Is Gobi Manchurian gluten-free?','Not gluten-free','Listed as gluten-free'),
+ ('Is Mushroom Pepper Fry gluten free?','gluten-free status is not confirmed','Listed as gluten-free'),
+ ('I have coeliac disease. Are these dishes safe?','cannot guarantee','Listed as gluten-free'),
 ])
 def test_specific_dietary_question(client,query,expected,excluded):
  sid=client.post('/api/sessions',json={'channel':'voice'}).json()['session_id']
@@ -103,7 +105,9 @@ def test_yes_to_dietary_choice_is_not_existing_reservation_consent(client,channe
  sid=client.post('/api/sessions',json={'channel':channel}).json()['session_id']
  session=api.sessions[sid]
  if channel=='voice':session.pending_reservation_request='Book a table for two next Saturday at half past eight'
- say(client,sid,'Do you have gluten-free dishes?')
+ prompt=say(client,sid,'Do you have gluten-free dishes?')
+ assert 'more dietary information' in prompt['reply']
+ assert 'do you have a reservation with us?' not in prompt['reply'].lower()
  answer=say(client,sid,'Yes please')
  assert 'dietary information' in answer['reply'] and 'phone' not in answer['reply'].lower()
  assert not session.bot.reservation_changes.active
@@ -128,5 +132,36 @@ def test_asr_dietary_clarification_yes_answers_the_actual_question(client):
  sid=client.post('/api/sessions',json={'channel':'voice'}).json()['session_id']
  say(client,sid,'Does your restaurant have gluten fillery options?')
  answer=say(client,sid,'Yes')
- assert 'no gluten listed' in answer['reply'] and 'cross-contact' in answer['reply']
+ assert 'Tomato Basil Risotto' in answer['reply'] and 'cross-contact' in answer['reply']
+ assert 'check_dish' in answer['structured']['tools_called']
  assert not api.sessions[sid].bot.reservation_changes.active
+
+
+@pytest.mark.parametrize('channel',['chat','voice'])
+@pytest.mark.parametrize('stage',['new','gate','phone'])
+@pytest.mark.parametrize('reply',['Yes please','Yes','No'])
+def test_dietary_acknowledgement_never_consumes_booking_identity(client,channel,stage,reply):
+ sid=client.post('/api/sessions',json={'channel':channel}).json()['session_id'];s=api.sessions[sid];b=s.bot
+ if stage=='gate':s.pending_reservation_request='Book a table for two next Saturday at half past eight'
+ if stage=='phone':
+  b.reserving=True;b._awaiting_slot='phone';b.slots={'date':'2027-02-20','time':'20:30','party_size':2}
+ pending=s.pending_reservation_request;slots=copy.deepcopy(b.slots)
+ b.tools.book_table=Mock(side_effect=AssertionError('Dietary answers cannot write'))
+ say(client,sid,'Which dishes would work for someone avoiding gluten?')
+ result=say(client,sid,reply)
+ assert s.pending_reservation_request==pending and b.slots==slots
+ assert not b.reservation_changes.active and 'phone' not in result['reply'].lower()
+ assert not b.tools.booking_store().list(b.tools.business_id)
+ b.tools.book_table.assert_not_called();b.chat.assert_not_called()
+
+
+@pytest.mark.parametrize('channel',['chat','voice'])
+def test_dietary_then_hours_does_not_leave_stale_dietary_question(client,channel):
+ sid=client.post('/api/sessions',json={'channel':channel}).json()['session_id'];s=api.sessions[sid]
+ say(client,sid,'What gluten-free dishes do you have?')
+ say(client,sid,'What are your opening hours?')
+ assert not s.bot._dietary_followup
+ answer=say(client,sid,'Yes')
+ assert 'What else would you like to ask' in answer['reply']
+ assert not s.bot.reservation_changes.active and not s.bot.tools.booking_store().list(s.bot.tools.business_id)
+ s.bot.chat.assert_not_called()

@@ -6,6 +6,7 @@ phone_region: US
 knowledge_id: malnad_mane
 cuisine: Indo-Italian (Indian flavours and Italian classics)
 address: "123 Demo Garden Lane, Springfield, IL 62701, United States (fictional demo address for the course; not a real restaurant location)"
+voice_address: "Demo address: 123 Demo Garden Lane, Springfield, Illinois."
 landmark: "Course demo only; no real-world directions are available."
 phone: null
 maps_link: null
@@ -75,10 +76,10 @@ faqs:
   - q: Do you have Jain or no-onion-garlic food?
     a: "Masala Dosa, Akki Rotti and Neer Dosa can be made without onion and garlic on request."
   - q: What payment methods do you accept?
-    a: "Cash, UPI and all debit and credit cards."
+    a: "Apple Pay (Apple Wallet), Google Pay, credit cards, debit cards, cash and cheque are accepted; UPI is not accepted."
   - q: Is there a service charge?
     a: "No service charge; GST of 5 percent is added to the bill."
   - q: Is the restaurant kid friendly?
-    a: "Yes, high chairs are available and we can make any dish less spicy for kids."
+    a: "Yes, high chairs are available; please tell staff if a child needs a high chair."
   - q: Do you serve alcohol?
     a: "No, we do not serve alcohol."

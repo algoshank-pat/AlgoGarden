@@ -13,10 +13,11 @@ def confirmation_control(text):
 def resume_reservation(text):
  t=text.lower().replace('’',"'").replace("let's",'let us').replace("i'd",'i would')
  t=' '.join(re.sub(r'[^a-z0-9\s]',' ',t).split())
- return bool(re.fullmatch(r'(?:(?:ok|okay|alright|yes|please)\s+)*(?:(?:let us|can we|could we|i want to|i would like to|id like to)\s+)?(?:go back to|get back to|return to|back to|resume|continue(?: with)?|finish)\s+(?:(?:my|our|the|that)\s+)?(?:reservation|booking)(?:\s+(?:now|please))*',t))
+ return bool(re.fullmatch(r'(?:(?:ok|okay|alright|yes|please)\s+)*(?:(?:let us|can we|could we|i want to|i would like to|id like to)\s+)?(?:go back to|get back to|return to|back to|resume|continue(?: with)?|finish|complete)\s+(?:(?:my|our|the|that)\s+)?(?:reservation|booking)(?:\s+(?:now|please))*',t))
 
 def readonly_info_intent(text):
  from routing import required_handoff
+ text=re.sub(r"\bwhere['’]s\b",'where is',text,flags=re.I)
  if required_handoff(text) or re.search(BOOK_COMMAND,text,re.I):return None
  question=bool('?' in text or re.search(r'\b(what|where|when|how|can|could|may|do|does|is|are|tell)\b',text,re.I))
  if question and (re.search(r'\b(parking|park|valet|address|directions|location|landmark)\b',text,re.I) or re.search(r'\bwhere\s+is\s+(?:the|your)\s+restaurant\b|\bhow\s+(?:do|can)\s+(?:i|we)\s+get\s+there\b',text,re.I)):return 'location_parking'
@@ -46,7 +47,8 @@ def availability_question(text):
  if re.search(TOPICS,t) or re.search(r'\b(policy|late|delayed|opening hours|business hours)\b',t):return False
  supply=bool(re.search(r'\b(openings?|availability|vacanc\w*|slots?)\b|\banything\s+(?:free|available|open)|\b(?:any|enough)\s+(?:room|space|seats?|tables?|spots?)\b|\b(?:is|are) there\s+(?:any\s+)?(?:room|space|seats?|tables?|spots?)\b|\bchance of\b.*\b(?:room|space|seats?|tables?|spots?)\b|\b(?:tables?|seats?|space|room)\b.*\b(?:free|available|open)\b|\b(?:fit|squeeze)\b.*\b(?:us|me|people|guests)\b',t))
  visit=bool(re.search(VISIT,t) and ('?' in t or re.search(r'\b(can|could|may|might)\b',t)))
- return (supply or visit) and not re.search(BOOK_COMMAND,t)
+ have_table=bool(re.search(r'\b(?:do you have|have you got|could you offer)\s+(?:(?:a|any|an available|an open|a free)\s+)?(?:tables?|seats?|room|space)\b',t))
+ return (supply or visit or have_table) and not re.search(BOOK_COMMAND,t)
 
 def broad_availability(text):
  from decision_evidence import date_phrases
@@ -68,13 +70,14 @@ def wants_information(bot,text):
  return bool(getattr(bot,'_dietary_followup',False) or late_policy_question(text) or broad_availability(text) or availability_question(text) or getattr(bot,'_availability_enquiry',None) is not None or getattr(bot,'_information_readback',None))
 
 def remember_readback(bot):
+ if getattr(bot,'_name_candidate',None):bot._name_needs_readback=True
  signature=pending_state(bot)
  if getattr(bot,'_information_readback',None) and getattr(bot,'_information_readback_state',None)==signature:return
  bot._information_readback=None
  change=bot.reservation_changes
  if bot.awaiting_confirmation or (change.active and change.pending):
   previous=getattr(bot,'_last_agent_reply','')
-  if previous and re.search(r'correct|confirm',previous,re.I):bot._information_readback=previous
+  if previous and re.search(r'\b(?:correct|confirm)\b',previous,re.I):bot._information_readback=previous
   elif change.active:
    row={**change.current,**change.changes}
    bot._information_readback=f"Please confirm: {change.action} the reservation for {row['party_size']} guests on {row['date']} at {row['time']}. Is that correct?"
@@ -92,6 +95,7 @@ def information_turn(bot,text):
  if required_handoff(text):return None
  info=readonly_info_intent(text)
  if info:
+  bot._dietary_followup=False
   remember_readback(bot);bot.failures=0
   return bot._dispatch(text,Decision(info,'rule','restaurant_information','Answer an explicit restaurant information question without changing the pending reservation.'),3)
  if getattr(bot,'_dietary_followup',False) and not getattr(bot,'_information_readback',None):
@@ -119,11 +123,10 @@ def information_turn(bot,text):
   bot._information_readback_state=None
   return None
  if broad or explicit:
+  bot._available_offer=None
   remember_readback(bot)
-  # A broad explicit booking still narrows before entering the existing booking flow.
-  if re.search(BOOK_COMMAND,text,re.I):
-   bot._availability_enquiry=None
-   return narrow_availability(bot)
+  # Keep clarification state for broad booking requests too. A partial date
+  # response must not fall through into unrelated phone collection.
   if state is None:state={};bot._availability_enquiry=state
  if state is not None:
   # Other explicit tasks interrupt this clarification; never turn a policy/menu
@@ -163,6 +166,21 @@ def information_turn(bot,text):
    return repeat_or_handoff(bot)
   bot.failures=0;bot.last_decision=Decision('reservation','rule','availability_enquiry','Answer availability, not a booking or identity request.',fields=dict(state))
   if len(days)>1 or len(clocks)>1:return 'Please choose one date and one arrival time so I can check availability.',[]
+  # Validate the supplied day immediately, before asking for time/party size.
+  # Use the restaurant clock on every turn; no model-provided current date.
+  from booking_validation import date_error
+  if state.get('date'):
+   day=parse_date(state['date'],today=local_today(bot.restaurant))
+   error=date_error(bot.restaurant,day) if day else 'Please give a valid specific date.'
+   if error:
+    state.pop('date',None);bot._available_offer=None;bot._availability_expected='date'
+    return error,[]
+   state['date']=day.isoformat()
+   clock=parse_time(state.get('time',''))
+   error=date_error(bot.restaurant,day,clock) if clock else None
+   if error:
+    state.pop('time',None);bot._available_offer=None;bot._availability_expected='time'
+    return error,[]
   for field,prompt in [('date','Which specific date would you prefer?'),('time','Around what arrival time?'),('party_size','For how many people?')]:
    if field not in state:
     bot._availability_expected=field
@@ -178,9 +196,11 @@ def information_turn(bot,text):
   result=bot.tools.check_table(state['party_size'],day.isoformat(),clock)
   bot._availability_enquiry=None;bot._availability_expected=None
   if result.get('available'):
+   bot._available_offer={'business_id':bot.tools.business_id,'fields':{'date':day.isoformat(),'time':clock,'party_size':state['party_size']}}
    return f"Yes, a table for {state['party_size']} is available on {day.isoformat()} at {clock}.",['check_table']
   from receptionist import alternative_question
-  return 'That requested time is unavailable. '+alternative_question(result.get('alternatives',[])),['check_table']
+  reason=result.get('reason') or result.get('error') or 'That requested time is unavailable.'
+  return reason+' '+alternative_question(result.get('alternatives',[])),['check_table']
  readback=getattr(bot,'_information_readback',None)
  if readback:
   if getattr(bot,'_information_readback_state',None)!=pending_state(bot):

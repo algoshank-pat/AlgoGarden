@@ -11,9 +11,13 @@ def additional_questions(text):
     amount=r'(?:(?:a couple(?: of)?|a few|couple(?: of)?|some|few|one|an|a)\s+)?'
     kind=r'(?:(?:additional|more|other|another|further|follow up|quick)\s+)*'
     question=amount+kind+r'questions?'
-    lead=r'(?:(?:yes|yeah|okay|ok|actually|also|well)\s+)*'
+    # A leading no can decline the previous offer while the positive clause
+    # asks to ask something. Full matching excludes negatives/actual questions.
+    positive_lead=r'(?:(?:yes|yeah|okay|ok|actually|also|well|just|wait)\s+)*'
+    lead=r'(?:(?:yes|yeah|okay|ok|actually|also|well|no(?: thanks| thank you)?|nope|but|just|wait)\s+)*'
     topic=r'(?:\s+about\s+(?:(?:my|our|the|your)\s+)?(?:reservations?|bookings?|restaurant|menu|parking|hours|policies))?'
-    return bool(re.fullmatch(lead+r'(?:(?:i|we)\s+(?:have(?: got)?|got|had)\s+'+question+r'|(?:can|could|may)\s+(?:i|we)\s+ask\s+(?:you\s+)?'+question+r'|(?:i|we)\s+(?:want|wanted|would like)\s+to\s+ask\s+(?:you\s+)?'+question+r'|'+question+r')'+topic+r'(?:\s+please)?',t))
+    request=r'(?:(?:i|we)\s+(?:(?:just|still)\s+)?(?:have(?: got)?|got|had)\s+'+question+r'|(?:can|could|may)\s+(?:i|we)\s+(?:just\s+)?ask\s+(?:you\s+)?'+question+r'|(?:i|we)\s+(?:(?:just|still)\s+)?(?:want|wanted|would like)\s+to\s+ask\s+(?:you\s+)?'+question+r')'
+    return bool(re.fullmatch(r'(?:'+lead+request+'|'+positive_lead+question+')'+topic+r'(?:\s+please)?',t))
 
 
 def declined_booking(text):
@@ -34,7 +38,7 @@ def abandon_draft(bot):
     bot._offered_alternatives=[]
     bot._existing_choice=False
     bot._dietary_followup=False
-    for name in ('_availability_enquiry','_information_readback','_information_readback_state','_awaiting_slot','_routed_fields'):
+    for name in ('_availability_enquiry','_information_readback','_information_readback_state','_awaiting_slot','_routed_fields','_name_candidate','_name_readback','_name_parts','_verified_name','_paused','_name_needs_readback'):
         setattr(bot,name,None)
     bot.last_decision=Decision('other','rule','declined_booking','Customer declined booking; discard unsaved drafts only. No reservation mutation or identity lookup.')
 

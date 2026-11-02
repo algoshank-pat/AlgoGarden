@@ -14,9 +14,9 @@ TOPICS=(
  Topic('cancellation',r'\bcancell?\w*\b|\bcannot make\b',r'\bcancell?\w*\b','cancellation advance notice warning deadline'),
  Topic('pets',r'\b(pets?|dogs?|pupp(?:y|ies)|animals?|cats?|kittens?|canines?|felines?|terriers?|dachshunds?|retrievers?|labradors?|poodles?|beagles?|spaniels?|husk(?:y|ies)|chihuahuas?|bulldogs?|corgis?|greyhounds?)\b',r'\b(pets?|animals?)\b','pets dogs indoor dining assistance animal'),
  Topic('outside_alcohol',r'\b(corkage|byob|wine|champagne|alcohol(?:ic)?|bottles?)\b',r'\b(outside|corkage)\b','outside alcoholic beverages corkage'),
- Topic('outside_cake',r'\b(cakes?|bakery|desserts?|pastries|cookies|brownies|food)\b',r'\b(outside food|cakes?|outside desserts?)\b','outside food birthday cakes homemade desserts prohibition exceptions notice permission'),
+ Topic('outside_cake',r'\b(cakes?|bakery|desserts?|pastries|cookies|brownies|pizza|food|snacks?|sandwiches?|meals?)\b',r'\b(outside food|cakes?|outside desserts?)\b','outside food birthday cakes homemade desserts prohibition exceptions notice permission'),
  Topic('children',r'\b(high[ -]?chairs?|boosters?|toddlers?|children|kids?|bab(?:y|ies))\b',r'\b(high chairs?|children|child)\b','children high chairs available request staff'),
- Topic('payment',r'\b(pay(?:ment)?s?|upi|cash|cards?|contactless|till|tender)\b',r'\b(accepted|payment)\b','payment methods cash UPI debit credit cards accepted'),
+ Topic('payment',r'\b(pay(?:ment)?s?|wallet|cheques?|checks?|bitcoin|crypto|upi|cash|cards?|contactless|till|tender)\b',r'\b(accepted|payment)\b','payment methods Apple Pay Apple Wallet Google Pay debit credit cash cheque UPI not accepted'),
  Topic('private_dining',r'\bprivate\s+(?:room|dining)|\b(?:separate|exclusive)\b.*\b(?:room|dining)|\bbuyouts?\b',r'\b(private|buyouts?|event packages)\b','private dining room promise approval confirmation'),
  Topic('separate_bills',r'\b(split|separate)\b.*\b(bills?|checks?|pay)|\b(?:each|our own|individually)\b.*\b(?:settle|pay|part|bills?|checks?)|\bbills?\b.*\bseparate\b',r'\bseparate bills\b','Payment methods and separate bills'),
  Topic('accessibility',r'\b(wheelchairs?|step[ -]?free|accessibility|mobility)\b',r'\b(wheelchair|step.free)\b','accessibility wheelchair seating step-free contact staff suitable arrangements'),
@@ -28,7 +28,8 @@ def policy_topics(text):
  # A request to perform a transaction or speak to a person keeps its meaning.
  if re.search(r'\b(?:speak|talk|connect|transfer)\b.*\b(?:staff|manager|human|person|someone)\b|\b(?:complaint|food poisoning)\b',t):return ()
  if re.search(r'^\s*(?:(?:please|actually)[, ]+)?(?:(?:can|could|would)\s+(?:i|we|you)\s+|(?:i|we)\s+(?:want|need|would like)\s+to\s+)?(?:book|reserve|reschedule|cancel|update|modify|order)\b',t):return ()
- question=bool('?' in t or re.search(r'\b(?:policy|policies|rules|allowed|permitted|welcome|acceptable|guarantee|promise|how|whether|can|could|may|will|would|do|does|is|are)\b',t))
+ question=bool('?' in t or re.search(r'\b(?:policy|policies|rules|permission|approved|notice|allowed|permitted|welcome|acceptable|guarantee|promise|how|whether|can|could|may|will|would|do|does|is|are)\b',t))
+ if re.search(r'\bhigh[ -]?chairs?\b',t) and re.search(r'\b(need|looking for|would like|have)\b',t):question=True
  if not question:return ()
  found=[]
  for topic in TOPICS:
@@ -37,7 +38,7 @@ def policy_topics(text):
   if topic.name=='cancellation' and not re.search(r'\b(policy|notice|warning|hours?|ahead|before|deadline|penalt\w*|fees?|how|if|cannot make)\b',t):continue
   if topic.name=='outside_alcohol' and not re.search(r'\b(outside|own|bring|brought|corkage|byob|supply|supplied|ourselves|themselves)\b',t):continue
   if topic.name=='outside_cake' and not re.search(r'\b(outside|bring|brought|bakery|own|home[ -]?made|permission)\b',t):continue
-  if topic.name=='payment' and re.search(r'\b(?:bill|check)\b',t):continue
+  if topic.name=='payment' and re.search(r'\bcheck\b',t) and not re.search(r'\b(pay|payment|take|accept|bank|write|cash)\b',t):continue
   found.append(topic)
  if any(t.name=='separate_bills' for t in found):found=[t for t in found if t.name!='payment']
  return tuple(found)
@@ -67,6 +68,9 @@ def select_quotes(text,candidates):
   if topic.name=='cancellation':
    # Administrative lookup instructions do not answer notice/timing questions.
    relevant=[c for c in relevant if not re.search(r'\b(reference|phone number)\b',c['text'],re.I)]
+  if topic.name=='children' and re.search(r'\bhigh[ -]?chairs?\b',text,re.I):
+   availability=[c for c in relevant if re.search(r'\b(available|not available|unavailable)\b',c['text'],re.I)]
+   if availability:relevant=availability
   relevant.sort(key=lambda c:len(words&set(re.findall(r'[a-z]+',c['text'].lower()))),reverse=True)
   # Private-room availability and approval are often separate source sentences.
   count=2 if topic.name=='private_dining' else 1

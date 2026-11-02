@@ -26,7 +26,7 @@ def say(c,sid,text,**extra):
 
 def begin(c,channel='voice'):
  sid=c.post('/api/sessions',json={'channel':channel}).json()['session_id']
- assert say(c,sid,'What are your opening hours?')['reply'].endswith('Is there anything else I can help you with?')
+ assert say(c,sid,'What are your opening hours?')['reply'].endswith('Do you have any other questions?')
  v=say(c,sid,'No, thank you. That is all.')
  assert v['reply']==OFFER and not v['ended'] and v['survey']['status']=='offered'
  return sid

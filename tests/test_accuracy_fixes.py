@@ -68,7 +68,7 @@ def test_field_recovery_preserves_name_and_phone(client):
  from tests.test_decision_engine import response
  sid=client.post('/api/sessions',json={'channel':'chat'}).json()['session_id'];b=api.sessions[sid].bot
  b.chat=Mock(return_value=response())
- r=say(client,sid,'Please book for four on February 17, 2027 at seven in the evening.')
+ r=say(client,sid,'Could you arrange a table for four on February 17, 2027 at seven in the evening?')
  assert b.slots=={'date':'February 17, 2027','time':'seven in the evening','party_size':4}
  assert 'phone' in r['reply'].lower();b.chat.assert_called_once()
  say(client,sid,'My phone number is 2025550173.');say(client,sid,'My name is Sam Miller.')
@@ -76,7 +76,7 @@ def test_field_recovery_preserves_name_and_phone(client):
  assert 'Sam Miller' in b._last_agent_reply
 
 @pytest.mark.parametrize('query,source,condition',[
- ('Can I bring my own birthday cake?','Birthday cakes from outside are welcome if staff are informed in advance.','in advance'),
+ ('Can I bring my own birthday cake?','All outside food, including birthday cakes, homemade cakes and outside desserts, is prohibited; there is no exception for advance notice or staff permission.','no exception'),
  ('How long will you hold my table if I am late?','Tables are held for 15 minutes after the reserved time unless staff agree otherwise.','unless staff agree otherwise'),
  ('How much cancellation notice do you need?','Please tell staff about a cancellation at least 2 hours before the reservation.','at least 2 hours'),
  ('Do you accept credit cards?','Cash, UPI, debit cards and credit cards are accepted.','credit cards'),
@@ -123,5 +123,7 @@ def test_name_words_are_not_booking_date_or_time_evidence(client,name):
  b.reserving=True;b._awaiting_slot='name'
  b.slots={'date':'2027-02-17','time':'19:00','party_size':4,'phone':'2025550173'};b._recognized_phone='+12025550173'
  r=say(client,sid,'My name is '+name+'.')
+ assert b._name_candidate==name and 'name' not in b.slots
+ say(client,sid,'Yes please')
  assert b.slots['name']==name and b.slots['date']=='2027-02-17' and b.slots['time']=='19:00' and b.awaiting_confirmation
  assert name in r['reply']

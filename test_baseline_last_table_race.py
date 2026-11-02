@@ -75,7 +75,9 @@ def main():
             with ThreadPoolExecutor(max_workers=2) as pool:
                 futures=[pool.submit(confirm,c) for c in customers];gate.wait();outcomes=[f.result() for f in futures]
             report['outcomes']=outcomes
-            winners=[r for r in outcomes if r['response']['reply'].startswith('Your table is booked')]
+            winners=[r for r in outcomes if any(
+                call.get('component')=='book_table' and isinstance(call.get('output'),dict) and call['output'].get('booked') is True
+                for call in r['response'].get('structured',{}).get('calls',[]))]
             losers=[r for r in outcomes if 'fully booked' in r['response']['reply'].lower()]
             assert len(winners)==len(losers)==1,outcomes
             assert 'I can offer' in losers[0]['response']['reply'],losers

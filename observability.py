@@ -43,15 +43,39 @@ def drain_exports(timeout=2):
     return not _exports.unfinished_tasks
 
 
+def destination_kwargs():
+    agent=os.getenv('LANGSMITH_AGENT_ID','').strip()
+    environment=os.getenv('LANGSMITH_AGENT_ENVIRONMENT','').strip().lower()
+    if agent or environment:
+        if not agent or environment not in {'local','development','staging','production'}:
+            raise ValueError('Set the exact LANGSMITH_AGENT_ID and a valid LANGSMITH_AGENT_ENVIRONMENT.')
+        if any(os.getenv(k) for k in ('LANGSMITH_PROJECT','LANGCHAIN_PROJECT','LANGCHAIN_SESSION')):
+            raise ValueError('Remove legacy project destination settings when using agent addressing.')
+        from langsmith import agent_address
+        return {'address':agent_address(agent,environment)}
+    return {'project_name':os.getenv('LANGSMITH_PROJECT','restaurant-receptionist')}
+
+def destination_status():
+    try:
+        destination_kwargs()
+        return {'valid':True,'agent_id':os.getenv('LANGSMITH_AGENT_ID') or None,
+                'environment':os.getenv('LANGSMITH_AGENT_ENVIRONMENT') or None,
+                'mode':'agent' if os.getenv('LANGSMITH_AGENT_ID') else 'project'}
+    except ValueError as error:
+        return {'valid':False,'reason':str(error)}
+
+
 def enabled() -> bool:
     return (os.getenv('LANGSMITH_TRACING', '').lower() == 'true'
-            and bool(os.getenv('LANGSMITH_API_KEY')))
+            and bool(os.getenv('LANGSMITH_API_KEY')) and destination_status()['valid'])
 
 
 def client():
     global _client
     if _client is None:
-        _client = Client(timeout_ms=1000, auto_batch_tracing=True)
+        # Export runs off the response path. Allow normal WAN latency instead
+        # of discarding uploads after an aggressive one-second timeout.
+        _client = Client(timeout_ms=10000, auto_batch_tracing=True)
     return _client
 
 
@@ -89,7 +113,13 @@ def observed(name: str, run_type: str = 'chain'):
             owner = args[0] if args else None
             try:
                 parent = _parent.get()
-                metadata = {'prompt_version': PROMPT_VERSION, 'payload_policy': 'no_raw_text'}
+                from trace_payloads import enabled as payload_enabled, payload
+                metadata = {'prompt_version': PROMPT_VERSION, 'payload_policy': 'developer_redacted' if payload_enabled() else 'no_raw_text'}
+                inputs={}
+                if payload_enabled():
+                    from inspect import signature
+                    bound=signature(fn).bind_partial(*args,**kwargs)
+                    inputs=payload({k:v for k,v in bound.arguments.items() if k not in {'self','cls','chat'} and not callable(v)})
                 model = kwargs.get('model', getattr(owner, 'model', None))
                 if model is not None:
                     metadata['model'] = model if model in {'gemma4:e2b-it-qat', 'gemma4', 'gemma4:latest', 'qwen3.6', 'qwen3.6:latest'} else 'custom_model'
@@ -99,10 +129,10 @@ def observed(name: str, run_type: str = 'chain'):
                     from uuid import UUID
                     metadata['session_id'] = str(UUID(session_id))
                 if parent:
-                    run = parent.create_child(name, run_type=run_type, inputs={}, extra={'metadata': metadata})
+                    run = parent.create_child(name, run_type=run_type, inputs=inputs, extra={'metadata': metadata})
                 else:
-                    run = RunTree(name=name, run_type=run_type, inputs={},
-                                  project_name=os.getenv('LANGSMITH_PROJECT', 'restaurant-receptionist'),
+                    run = RunTree(name=name, run_type=run_type, inputs=inputs,
+                                  **destination_kwargs(),
                                   extra={'metadata': metadata}, client=client())
                 export_later(run.post)
                 token = _parent.set(run)
@@ -126,6 +156,7 @@ def observed(name: str, run_type: str = 'chain'):
                 if run is not None:
                     try:
                         outputs = summary(result)
+                        if payload_enabled():outputs['result']=payload(result)
                         decision = getattr(owner, 'last_decision', None)
                         if name == 'receptionist.turn' and decision is not None:
                             outputs['routing'] = summary(decision)

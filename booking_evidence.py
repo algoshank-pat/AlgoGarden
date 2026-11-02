@@ -11,12 +11,13 @@ def explicit_fields(text):
  if len(clocks)==1:result['time']=clocks[0][2]
  numbers=dict(zip('one two three four five six seven eight nine ten eleven twelve'.split(),range(1,13)))
  n=r'(\d{1,2}|'+ '|'.join(numbers)+r')'
- matches=list(re.finditer(r'\b(?:for|party of|table for)\s+'+n+r'\b|\b'+n+r'\s+(?:people|guests|of us)\b',text,re.I))
+ matches=list(re.finditer(r'\b(?:for|party of|table for|book|reserve)\s+'+n+r'\b|\b'+n+r'\s+(?:people|guests|of us)\b',text,re.I))
  positive=[]
  for m in matches:
   if negative_prefix(text[:m.start()]):continue
   if re.match(r'\s+(?:of\s+)?'+MONTH+r'\b',text[m.end():],re.I):continue
   raw=(m[1] or m[2]).lower();value=int(raw) if raw.isdigit() else numbers[raw]
   if 1<=value<=99:positive.append(value)
- if len(set(positive))==1 and not re.search(r'\b(?:or|either)\b',text,re.I):result['party_size']=positive[0]
+ party_choice=re.search(r'\b(?:for|party of|table for|book|reserve)\s+'+n+r'\s+(?:or|and)\s+'+n+r'\b',text,re.I)
+ if len(set(positive))==1 and not party_choice:result['party_size']=positive[0]
  return result

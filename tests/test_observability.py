@@ -90,3 +90,22 @@ def test_business_errors_propagate_without_exporting_message(exports):
 
 def test_tool_summary_omits_contact_and_free_text():
     assert obs.summary({'name': 'Alex', 'phone': '9900112233', 'message': 'secret', 'saved': True}) == {'saved': True}
+
+@pytest.mark.parametrize('environment',['local','development','staging','production'])
+def test_agent_destination_has_no_project_override(monkeypatch,environment):
+    for key in ['LANGSMITH_PROJECT','LANGCHAIN_PROJECT','LANGCHAIN_SESSION']:monkeypatch.delenv(key,raising=False)
+    monkeypatch.setenv('LANGSMITH_AGENT_ID','test-agent')
+    monkeypatch.setenv('LANGSMITH_AGENT_ENVIRONMENT',environment)
+    kwargs=obs.destination_kwargs()
+    assert set(kwargs)=={'address'}
+    assert obs.destination_status()['mode']=='agent'
+
+def test_incomplete_agent_configuration_fails_closed(monkeypatch):
+    monkeypatch.setenv('LANGSMITH_TRACING','true');monkeypatch.setenv('LANGSMITH_API_KEY','test-only')
+    monkeypatch.delenv('LANGSMITH_AGENT_ID',raising=False);monkeypatch.setenv('LANGSMITH_AGENT_ENVIRONMENT','local')
+    assert not obs.enabled()
+    assert not obs.destination_status()['valid']
+
+def test_conflicting_project_is_rejected(monkeypatch):
+    monkeypatch.setenv('LANGSMITH_AGENT_ID','test-agent');monkeypatch.setenv('LANGSMITH_AGENT_ENVIRONMENT','local');monkeypatch.setenv('LANGSMITH_PROJECT','other-project')
+    with pytest.raises(ValueError,match='Remove legacy'):obs.destination_kwargs()

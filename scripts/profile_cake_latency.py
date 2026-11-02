@@ -3,6 +3,7 @@ import os,sys,json,time,copy,hashlib,urllib.request
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 phase=sys.argv[1];out=ROOT/'results/cake-latency-20261028'/phase;out.mkdir(parents=True,exist_ok=False)
+(out/'private').mkdir()
 os.environ.update(RECEPTIONIST_FIXTURE_DIR=str(out/'private'),LANGSMITH_TRACING='false',RECEPTIONIST_DECISION_PROTOCOL='baseline')
 from freeze_customer100 import digest
 def model_digest():
@@ -35,12 +36,25 @@ try:
     else:setattr(b,k,v)
    b._last_agent_reply='What phone number should I use?' if case['name']=='mixed_phone' else 'May I have your name?' if case['name']=='mixed_name' else None
    events=[];start=time.perf_counter()
-   with local_audit.capture(events),turn_context(b,case['text']):value=decide(b,case['text'])
+   with local_audit.capture(events),turn_context(b,case['text']):
+    if phase.startswith('workflow'):
+     store=b.tools.booking_store()
+     if case['name']=='update':
+      original=store.book(b.tools.business_id,{'name':'Private Existing','phone':'2025550191','date':'2027-02-17','time':'19:00','party_size':2,'ts':'2026-10-28'},40,0,'private-existing')
+      current=next(r for r in store.list(b.tools.business_id) if r['id']==original['id'])
+      b.reservation_changes.phone='+12025550191';b.reservation_changes.current=current
+     elif b.reserving:b._recognized_phone='+12025550173'
+     db_before=store.list(b.tools.business_id)
+     reply,tools=b.turn(case['text'])
+     outcome=b.reservation_changes.changes if case['name']=='update' else b.slots
+     value={'relevance':'relevant' if not b.ended else 'failed','intent':b.last_decision.intent,'fields':outcome,'reply':reply,'tools':tools,'write_free':db_before==store.list(b.tools.business_id)}
+    else:value=decide(b,case['text'])
    elapsed=(time.perf_counter()-start)*1000
-   raw=next(e['details']['output'] for e in events if e['name']=='ollama.response_received')
-   request=next(e['details']['inputs']['kwargs'] for e in events if e['name']=='ollama.request_prepared')
-   assert request['model']=='gemma4:e2b-it-qat' and request['think'] is False and request['keep_alive']=='30m'
-   assert request['options']=={'num_ctx':2048,'num_predict':256,'temperature':0}
+   raw=next((e['details']['output'] for e in events if e['name']=='ollama.response_received'),{})
+   request=next((e['details']['inputs']['kwargs'] for e in events if e['name']=='ollama.request_prepared'),None)
+   if request:
+    assert request['model']=='gemma4:e2b-it-qat' and request['think'] is False and request['keep_alive']=='30m'
+    assert request['options']=={'num_ctx':2048,'num_predict':256,'temperature':0}
    from customer_identity import local_today,normalize_phone
    checks=[]
    for k,v in case['fields'].items():
@@ -49,11 +63,12 @@ try:
     elif k=='time':checks.append(app.parse_time(actual or '')==v)
     elif k=='phone':checks.append(normalize_phone(actual or '','US')==normalize_phone(v,'US'))
     else:checks.append(actual==v)
-   correct=value['relevance']=='relevant' and value['intent']=='reservation' and all(checks)
+   correct=value['relevance']=='relevant' and value['intent']=='reservation' and all(checks) and value.get('write_free',True)
    row={'case':case['name'],'context_run':'first' if repeat==0 else 'repeat','ms':elapsed,'correct':correct,'decision':value,
-    'timings_ms':{k:raw.get(k,0)/1e6 for k in ['load_duration','prompt_eval_duration','eval_duration','total_duration']},
+    'model_called':bool(raw),'timings_ms':{k:raw.get(k,0)/1e6 for k in ['load_duration','prompt_eval_duration','eval_duration','total_duration']},
     'prompt_tokens':raw.get('prompt_eval_count'),'output_tokens':raw.get('eval_count'),'request':request,'events':events}
    row['http_validation_overhead_ms']=elapsed-row['timings_ms']['total_duration']
+   row['stage_events']=[e for e in events if e.get('duration_ms') is not None or e['name']=='mcp.lookup.timings']
    report['rows'].append(row);save();print(case['name'],row['context_run'],round(elapsed),correct,flush=True)
 finally:
  report['baseline_after']=digest(ROOT/'reservations.sqlite3');assert report['baseline_after']==baseline

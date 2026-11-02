@@ -16,7 +16,7 @@ export class VoiceEndpoint {
   }else this.chunks.push(frame);
   this.elapsed+=ms;this.quiet=speech?0:this.quiet+ms;if(speech)this.voiced+=ms;
   if(this.quiet>=this.silenceMs||this.elapsed>=this.maxMs){
-   const chunks=this.voiced>=this.minSpeechMs?this.chunks:null;this.reset();return chunks;
+   const chunks=this.voiced>=this.minSpeechMs?this.chunks:null;this.lastMeasurement={captureMs:this.elapsed,endpointMs:this.quiet};this.reset();return chunks;
   }
   return null;
  }

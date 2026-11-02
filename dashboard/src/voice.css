@@ -14,3 +14,4 @@
 
 /* Readable transcripts for projected and shared-screen demos. */
 .voice-customer .voice-utterance p{font-size:20px;line-height:1.7}.voice-customer .voice-utterance small{font-size:12px;letter-spacing:1px}.voice-customer .voice-utterance{padding:16px 20px}.voice-customer .voice-transcript-heading .transcript-legend b{font-size:12px}@media(max-width:650px){.voice-customer .voice-utterance p{font-size:18px}.voice-customer .voice-utterance small{font-size:11px}.voice-customer .voice-utterance{padding:14px 16px}}
+.voice-utterance .conversation-message-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}.voice-utterance .conversation-message-meta time{font-size:12px;font-weight:400;letter-spacing:0;line-height:1.5;text-transform:none;color:#accac9}.voice-utterance.user .conversation-message-meta time{color:#d6c6ef}

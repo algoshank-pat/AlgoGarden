@@ -53,6 +53,8 @@ def handle(session,text,unrecognized=False):
 
 def offer(session,expanded=False):
     session.awaiting_more_help=False
+    session.awaiting_reservation_return=session.awaiting_additional_question=False
+    session.wait_return_gate=False;session.conversation_wait=None
     session.bot.ended=False
     session.survey.update(status='offered',offered_at=now(),expanded=expanded)
     event('feedback.offered',{})

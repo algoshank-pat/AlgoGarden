@@ -200,7 +200,7 @@ $env:LANGSMITH_PROJECT = 'algo-garden'
 $env:LANGSMITH_API_KEY = '<your-key>'
 ```
 
-Then start Uvicorn normally. Keep real keys out of Git. `.env.example` documents settings; the application does **not** automatically load an `.env` file. Trace exports use a bounded background queue and omit raw conversation text and retrieved documents; local audits retain conversation data.
+Then start Uvicorn normally. Keep real keys out of Git. `.env.example` documents settings; manual commands must pass `uv run --env-file .env` to load it; `scripts/start-traced-api.ps1` does this automatically. Trace exports use a bounded background queue and omit raw conversation text and retrieved documents; local audits retain conversation data.
 
 Other supported settings include `RECEPTIONIST_MODEL`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_NUM_PREDICT`, `RECEPTIONIST_TURN_WORKERS`, `RECEPTIONIST_QUEUE_LIMIT` and `RECEPTIONIST_QUEUE_WAIT_SECONDS`. Defaults favor local CPU operation: one active turn, six waiting turns, 2048 context tokens and 192 generated tokens. Different sessions can connect together, but default turn execution is serialized. Do not increase concurrency without measuring your hardware.
 
@@ -244,3 +244,65 @@ The broader suite is available with `uv run --extra voice pytest tests -q`; not 
 Reservations and their events live in `reservations.sqlite3`; conversation audits, messages and owner follow-ups use local JSONL files. These records survive restarts, but active conversational sessions do not. Downloaded models, dependencies, generated results, recordings, databases and secrets are excluded from Git.
 
 This is a **loopback-only prototype** with unauthenticated owner endpoints. Phone matching finds contact records; it does not verify identity. Table positions are suggested planning assignments, not physical check-in sensors or permanently assigned tables. SQLite protects reservation transactions, but JSONL conversation logs are not an atomic, tamper-proof audit system. Public hosting, authentication, verified caller identity, real telephone integration and multi-host operation need additional work.
+
+## Analyze turn latency in LangSmith
+
+From the repository root, stop the existing API and launch:
+
+```powershell
+.\scripts\start-traced-api.ps1
+```
+
+Copy `.env.example` to `.env` and enter your `LANGSMITH_API_KEY` there first. The launcher loads `.env` with uv and starts the voice-enabled API. `.env` is ignored by Git; keep the key private. Existing shell variables take precedence over `.env` values. Start Vite normally, then use `/chat` or `/voice`. Check `http://127.0.0.1:8010/api/developer/tracing/status` for the enabled flag and project name. Enabled means credentials are configured, not that LangSmith has accepted them; confirm a fresh trace appears in the project. Invalid credentials/network failures are logged in the API terminal.
+
+In LangSmith, open project **algo-garden**, select a **customer.turn** trace, and inspect its nested timing tree. `session_id` and `thread_id` group the conversation; `request_id` identifies the turn. API replies also return `performance_trace_id`. Cached backend retries reuse the result rather than rerunning inference or creating another backend trace.
+
+| Span or measurement | Meaning |
+|---|---|
+| `customer.audio_capture` | Browser-detected utterance window, including endpoint silence; not pure voiced time |
+| `speech.endpoint_delay` | Browser energy detector's final quiet window; an estimate of end-of-speech delay |
+| `browser.preview_wait` | Waiting for an outstanding live transcript preview before final ASR |
+| `speech.to_text` | Server transcription, including resource initialization and optional short-survey second pass |
+| `speech.parakeet`, `speech.survey_second_pass` | Individual recognition operations when invoked |
+| `browser.stt_roundtrip` | Browser-observed STT round trip; may include feedback voice-note upload |
+| `backend.total` | Server turn including admission wait and application processing |
+| `queue.wait` | Backend admission wait only |
+| `receptionist.turn`, `reservation.workflow` | Instrumented workflow execution |
+| `ollama.chat` | Each actual LLM call; token counts where returned by Ollama |
+| Named tool spans / `knowledge.embed` | Reservation tools, menu tools, retrieval and embeddings when invoked |
+| `speech.time_to_first_audio` | Server time until the first synthesized chunk is ready |
+| `speech.synthesis_compute` | Accumulated synthesis iterator time; excludes stream transport waits; initialization is captured by time-to-first-audio |
+| `speech.stream_lifetime` | Full server stream lifetime, including streaming/backpressure |
+| `browser.tts_to_first_playback` | Speech request to the first successful browser `audio.play()` |
+| `browser.reply_start` | Final submission to first playback plus estimated endpoint delay; primary perceived response-delay metric |
+
+Use the hierarchy to locate slow operations. **Do not sum all spans:** backend totals contain LLM/tool work, STT round trips contain server STT, and streamed synthesis overlaps playback. Browser measurements are labelled `browser_reported`; their displayed start is reconstructed from receipt time and duration, so these are duration comparisons, not precise cross-machine clock synchronization. `browser.reply_start` does not measure physical sound reaching the listener, and a queued/interrupted turn may omit it. The root is finalized after backend work and updated as voice synthesis/browser reports arrive; its duration alone is not the authoritative perceived-latency measure. First-run model loading can dominate latency. Missing spans mean a stage was skipped or not reported, not zero time.
+
+All new stage measurements also append to local `turn_timings.jsonl`, including when LangSmith is disabled. Existing local call audit events retain detailed LLM/tool timings. Remote traces contain generated IDs, stage names, timing data and existing sanitized outputs, not customer prompts, transcripts, phone numbers, raw replies or audio. Browser preview requests and startup greeting/warmup are not separate customer-turn traces. Terminal voice clients retain their existing metrics; browser playback measurements apply only to browser calls. Exports are best effort through a bounded background queue and can be dropped on failures or abrupt shutdown.
+
+### Grouped turn traces
+
+New `customer.turn` traces contain **Input**, **Processing**, and **Response** groups. STT/capture/endpoint measurements sit under Input; backend, queue, LLM, retrieval and tool spans sit under Processing; synthesis and playback measurements sit under Response. Groups are organizational envelopes, not additive stage totals. A group with `measured: false` has no reported measurements; this is common for chat Input/Response. Browser duration spans remain reconstructed and can overlap server spans.
+
+Filter root traces by the `use_case` metadata or `use_case:<value>` tag: `booking`, `update`, `cancellation`, `lookup`, `menu`, `policy`, `hours`, `location`, `staff_assistance`, or `general`. The `workflow` metadata retains the active reservation context during an information interruption. Follow-up phone numbers/confirmations inherit the workflow, including after a successful mutation clears conversation state. Labels are derived from existing routing/workflow state and do not add LLM calls or export user text. API turn responses include `performance_use_case`. Existing historical traces are unchanged; restart the API to apply grouping to new turns.
+
+### Agent-based LangSmith workspace — current configuration
+
+This workspace uses **Agents and Environments**, so the earlier project-based setup above is superseded for this installation. In `.env`, retain your API key and tracing flag and configure:
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your-private-key
+LANGSMITH_AGENT_ID=the-exact-id-from-agent-overview
+LANGSMITH_AGENT_ENVIRONMENT=local
+```
+
+Remove `LANGSMITH_PROJECT`, `LANGCHAIN_PROJECT` and `LANGCHAIN_SESSION` from both `.env` and the API terminal environment. The application passes an explicit SDK agent address for root traces; child groups/spans inherit it. Incomplete agent configuration or conflicting legacy settings disables export instead of falling back to another destination. Copy the identifier from the Algo Garden agent's Overview/ID control; its display name is not sufficient, and the agent must already exist in the API key's workspace.
+
+Restart the API after setting the identifier. `/api/developer/tracing/status` reports destination validity, agent ID and environment without exposing the key. In LangSmith, select **Algo Garden → Local → Tracing**. A successful ingestion response alone is not proof that the destination was correctly mapped or that a trace is visible; verify a fresh trace in that environment.
+
+### Developer input/output payloads
+
+Set `LANGSMITH_PAYLOAD_MODE=developer` to inspect customer-turn text and replies, model request arguments and structured results, tool inputs/outputs, STT transcripts and TTS text. This is now selected in the local `.env` and `.env.example`. `summary` restores the earlier content-free export policy. Changes require an API restart and apply only to new traces.
+
+Payloads are bounded in depth, list size and text length. Credential fields, the configured LangSmith key, common token patterns, email addresses, phone-like digit strings, labelled name/contact fields and hidden model reasoning are redacted or omitted. Audio/samples are not exported. This is not comprehensive de-identification: names or other personal details embedded in free prose can remain, and digit-word phone utterances may remain. Use synthetic customer data for developer tracing. Full trace payloads increase the amount of application content sent to LangSmith compared with the prior summary-only mode. Group timing updates and root completion preserve captured payloads. Failed exports never replay business operations.

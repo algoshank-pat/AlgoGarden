@@ -206,25 +206,30 @@ class PiperSpeaker:
         self.synthesis_config = SynthesisConfig(length_scale=1.03, noise_scale=0.6, noise_w_scale=0.75)
         from collections import OrderedDict
         self._cache=OrderedDict()
+        self._cache_limit=64
 
     def chunks(self,text):
         """Cache only public common phrases; stream sentence chunks otherwise."""
         from .speech_text import natural_speech
-        text=natural_speech(text)
-        cacheable=(text.startswith('Thank you for calling ') or text.startswith('Thank you so much for calling.') or text in {
-            'Do you have a reservation with us?','What phone number was used for the reservation?',
-            'What phone number can I use for your reservation?','May I have your name for the reservation?',
-            'Is there anything else I can help you with?'})
-        if cacheable and text in self._cache:
-            self._cache.move_to_end(text)
-            yield from self._cache[text];return
+        from .phrases import spoken_text,cacheable
+        text=spoken_text(text)
+        eligible=cacheable(text)
+        # In-memory, speaker-local cache: exact normalized wording (including any
+        # restaurant name), loaded voice identity and all synthesis settings.
+        # A new voice/config cannot replay old audio. No policies or personal data.
+        key=(id(self.voice),repr(getattr(self,'synthesis_config',None)),text)
+        if eligible and key in self._cache:
+            self._cache.move_to_end(key)
+            yield from self._cache[key];return
         saved=[]
         for chunk in self.voice.synthesize(text, **({'syn_config':self.synthesis_config} if hasattr(self,'synthesis_config') else {})):
-            if cacheable:saved.append(chunk)
+            if eligible:saved.append(chunk)
             yield chunk
-        if cacheable:
-            self._cache[text]=saved
-            if len(self._cache)>16:self._cache.popitem(last=False)
+        if eligible and saved:
+            # Install only after complete synthesis; interrupted/erroring streams
+            # cannot poison a later call with a partial recording.
+            self._cache[key]=saved
+            while len(self._cache)>getattr(self,'_cache_limit',64):self._cache.popitem(last=False)
 
     def prime(self,texts):
         for text in texts:list(self.chunks(text))

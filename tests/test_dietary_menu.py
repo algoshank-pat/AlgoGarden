@@ -60,7 +60,7 @@ def test_voice_new_choice_preserves_request_after_dietary_interruption(bot):
  reply,_=voice_reservation_turn(session,'No, I do not have a reservation.')
  assert session.pending_reservation_request is None
  assert bot._dietary_followup is False
- assert bot.turn.call_args.args[0]==original+'\nNo, I do not have a reservation.'
+ assert bot.turn.call_args.args[0]==original
  assert 'phone' in reply
 
 
@@ -89,3 +89,24 @@ def test_resumed_change_readback_clears_dietary_followup(bot):
  assert 'confirm' in reply
  assert bot._dietary_followup is False
  assert bot.reservation_changes.pending
+
+
+def test_conflicting_gluten_label_cannot_override_recorded_allergen(bot):
+ import copy
+ bot.restaurant=copy.deepcopy(bot.restaurant);bot.tools.r=bot.restaurant
+ dish=next(d for d in bot.restaurant['menu'] if d['name']=='Peanut Chilli Spaghetti')
+ dish['gluten_free']=True
+ reply,_=bot.turn('Is Peanut Chilli Spaghetti gluten-free?')
+ assert 'Not gluten-free' in reply and 'Listed as gluten-free' not in reply
+ reply,_=bot.turn('What gluten-free dishes do you have?')
+ assert 'Peanut Chilli Spaghetti' not in reply
+
+
+@pytest.mark.parametrize('question',[
+ 'Is gluten-free food safe for coeliac disease?',
+ 'Does having no gluten listed guarantee it is safe for celiac disease?',
+])
+def test_safety_question_without_named_dish_is_not_a_missing_dish_request(bot,question):
+ reply,_=bot.turn(question)
+ assert 'cannot guarantee' in reply and 'cross-contact' in reply
+ assert 'Which menu dish' not in reply

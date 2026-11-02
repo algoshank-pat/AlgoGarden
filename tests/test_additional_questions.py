@@ -10,6 +10,9 @@ from tests.test_customer_feedback import client,say
  'Can I ask you another question?','May I ask a question?','One more question please.',
  'I would like to ask a few questions.',"I've got a quick follow-up question.",
  'Yes, I have more questions about my reservation.',
+ 'No, I have a question.','No thanks, I just have another question.',
+ 'No, but can I ask you a quick question?','Actually, we still have a few questions.',
+ 'No, I would like to ask another question about your restaurant.',
 ])
 def test_natural_invitation_variants(text):assert additional_questions(text)
 
@@ -18,12 +21,16 @@ def test_natural_invitation_variants(text):assert additional_questions(text)
  'I have additional questions. Can I bring my dog?',
  'Can I ask if parking is free?', 'I have a reservation.',
  'Who is Albert Einstein?', 'My name is More Questions',
+ 'No questions.','No more questions.','No other questions, thank you.',
+ 'No, I have no questions.','No, I have a question. Where can I park?',
+ 'No, do you have high chairs?','No, please cancel my booking.',
 ])
 def test_does_not_swallow_negatives_or_actual_questions(text):assert not additional_questions(text)
 
+@pytest.mark.parametrize('phrase',['I have additional questions','No, I have a question.','No thanks, I just have another question.'])
 @pytest.mark.parametrize('channel',['chat','voice'])
 @pytest.mark.parametrize('state',['idle','voice_gate','phone','confirmation','more_help','survey_offer','survey_comment','survey_rating'])
-def test_invitation_preserves_work_and_costs_no_inference(client,channel,state):
+def test_invitation_preserves_work_and_costs_no_inference(client,channel,state,phrase):
  sid=client.post('/api/sessions',json={'channel':channel}).json()['session_id'];s=api.sessions[sid];b=s.bot
  if state=='voice_gate':s.pending_reservation_request='Book a table for two tomorrow at seven'
  if state in {'phone','confirmation'}:
@@ -34,7 +41,7 @@ def test_invitation_preserves_work_and_costs_no_inference(client,channel,state):
  if state.startswith('survey_'):s.survey.update(status={'survey_offer':'offered','survey_comment':'awaiting_comment','survey_rating':'awaiting_rating'}[state])
  original=pending_state(b);pending=s.pending_reservation_request;b.failures=3
  b.menu_agent.last_sources=['old-policy.md'];b.tools.book_table=Mock(side_effect=AssertionError('Invitation cannot book'))
- result=say(client,sid,'I have additional questions')
+ result=say(client,sid,phrase)
  assert result['reply']==ADDITIONAL_QUESTIONS_REPLY and not result['ended'] and not result['handoff']
  assert pending_state(b)==original and s.pending_reservation_request==pending
  assert not s.awaiting_more_help and b.failures==0
@@ -59,7 +66,8 @@ def test_yes_after_invitation_cannot_commit_pending_readback(client):
  b.tools.book_table=Mock(side_effect=AssertionError('Yes after invitation is not booking confirmation'))
  original=pending_state(b);say(client,sid,'I have additional questions')
  reply=say(client,sid,'Yes')
- assert reply['reply']==b._last_agent_reply and pending_state(b)==original
+ from conversation_followup import INVITE
+ assert reply['reply']==INVITE and pending_state(b)==original
  b.tools.book_table.assert_not_called()
 
 def test_combined_real_question_is_answered_instead_of_invited(client):

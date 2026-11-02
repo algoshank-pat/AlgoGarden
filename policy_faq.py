@@ -27,14 +27,16 @@ def lookup(business,query,docs):
       'outside_cake':r'\b(bring|brought|outside|bakery|own|home[ -]?made|permission|allowed|permitted)\b',
       'outside_alcohol':r'\b(bring|outside|corkage|byob)\b',
       'children':r'\b(high[ -]?chairs?|kid[ -]?friendly|children welcome)\b',
-      'payment':r'\b(methods?|accept\w*|cash|upi|debit|credit|cards?)\b',
+      'payment':r'\b(pay|wallet|bitcoin|crypto|cheques?|methods?|accept\w*|cash|upi|debit|credit|cards?)\b',
       'separate_bills':r'\b(split|separate)\b',
       'accessibility':r'\b(step[ -]?free|wheelchair)\b',
       'dress':r'\b(dress code|attire|shirts?|footwear)\b',
     }
     if topic not in gates or not re.search(gates[topic],query,re.I):return None
     # These ask for facts beyond the simple indoor/assistance-animal policy.
-    if re.search(r'\b(fees?|charges?|vaccin\w*|certificat\w*|breeds?|weights?|parking|menu|book|reserve|update|bitcoin|crypto|seatbelts?|straps?)\b',query,re.I):return None
+    if topic=='payment':
+        pass # A closed, authoritative payment-method list also answers unsupported methods.
+    elif re.search(r'\b(fees?|charges?|vaccin\w*|certificat\w*|breeds?|weights?|parking|menu|book|reserve|update|bitcoin|crypto|seatbelts?|straps?)\b',query,re.I):return None
     if topic=='pets' and re.search(r'\b(patio|terrace|outdoors?|outside|hours?|cancel)\b',query,re.I):return None
     facts=_snapshot(business,tuple(sorted(docs.items())))
     if not facts:return None

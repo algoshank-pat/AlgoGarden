@@ -40,7 +40,8 @@ def answer(bot,text):
    for field in wanted:
     label='vegan' if field=='vegan' else 'gluten-free';flag=d.get(field)
     contains=field=='gluten_free' and 'gluten' in allergens or field=='vegan' and (d.get('veg') is False or bool(allergens&{'dairy','eggs','fish','shellfish'}))
-    parts.append('Listed as '+label+'.' if flag is True else 'Not '+label+'.' if flag is False or contains else 'Its '+label+' status is not confirmed.')
+    # An explicit conflicting allergen overrides a positive dietary label.
+    parts.append('Not '+label+'.' if contains or flag is False else 'Listed as '+label+'.' if flag is True else 'Its '+label+' status is not confirmed.')
    nut_allergens=sorted(allergens&{'peanut','peanuts','cashew','cashews','almond','almonds','walnut','walnuts','pistachio','pistachios','tree nuts','nuts'})
    if nut_allergens and not complete_allergens and (nuts or wanted):parts.append('Contains '+', '.join(nut_allergens)+'.')
    elif nuts:parts.append('Listed as nut-free.' if original.get('nut_free') is True else 'Nut-free status is not confirmed; no nuts are listed, which is not a guarantee.')
@@ -49,12 +50,14 @@ def answer(bot,text):
   dietary=bool(wanted or nuts or re.search(r'allergen|dairy|milk|butter|ghee|cheese',text,re.I))
   if not dietary:bot._dietary_followup=False
   return ' '.join(replies)+(' Please confirm allergies and cross-contact with our kitchen.' if dietary else ''),['check_dish']
- if re.search(r'^\s*(is|does)\b',text,re.I):return 'Which menu dish would you like me to check? I cannot confirm an unlisted dish’s dietary status.',[]
  if re.search(r'celiac|coeliac|\bsafe\b|guarantee',text,re.I):return 'I cannot guarantee allergy or celiac safety. Our kitchen must confirm ingredients and cross-contact.',[]
+ if re.search(r'^\s*(is|does)\b',text,re.I):return 'Which menu dish would you like me to check? I cannot confirm an unlisted dish’s dietary status.',[]
  items=[d for d in menu if d.get('available') and d.get('category')!='beverages' and all(d.get(field) is True for field in wanted)]
+ if 'gluten_free' in wanted:items=[d for d in items if 'gluten' not in {str(a).lower() for a in (d.get('allergens') or [])}]
+ if 'vegan' in wanted:items=[d for d in items if d.get('veg') is not False and not {str(a).lower() for a in (d.get('allergens') or [])}&{'dairy','eggs','fish','shellfish'}]
  if nuts:items=[d for d in items if d.get('nut_free') is True]
  if not wanted and not nuts:return 'Which dietary requirement would you like me to check?',[]
- voice=getattr(bot.tools,'booking_source','chat')=='phone';items=items[:2 if voice else 4]
+ voice=getattr(bot.tools,'booking_source','chat')=='phone';items=items[:2 if voice or 'gluten_free' in wanted else 4]
  event('dietary.menu_checked',{'basis':'explicit_dietary_fields','restrictions':wanted,'nut_free_requested':nuts,'candidates':[d['name'] for d in items]})
  if not items:return 'I cannot confirm suitable dishes from the recorded menu labels. Please check with our kitchen.',[]
  options=[]
@@ -63,5 +66,5 @@ def answer(bot,text):
   options.append(dish['name']+(' (contains peanuts)' if any(a in {'peanut','peanuts'} for a in recorded.get('allergens',[])) else ''))
  reply='A couple of options are ' if voice else 'Options include '
  reply+=', '.join(options)+'.'
- if voice:reply+=' Please check our website for the full menu.'
+ if voice or 'gluten_free' in wanted:reply+=' Please check our restaurant website menu for more options.'
  return reply+' Please tell our staff about allergies and cross-contact.',['check_dish']

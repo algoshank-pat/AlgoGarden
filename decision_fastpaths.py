@@ -1,9 +1,13 @@
 """Conservative expected-field fast paths; complete requests fall through to the joint model."""
 import re
+import os
 NUMBERS=dict(zip('one two three four five six seven eight nine ten eleven twelve'.split(),range(1,13)))
 MONTH=r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
 WEEK=r'(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)'
-DATE_ONLY=r'(?:on\s+)?(?:today|tomorrow|tonight|(?:(?:next|this)\s+)?'+WEEK+r'|\d{4}-\d{2}-\d{2}|'+MONTH+r'\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?|(?:the\s+)?\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?'+MONTH+r'(?:,?\s+\d{4})?)'
+from voice.speech_text import ORDINAL,number
+_DAY=r'(?:\d{1,2}(?:st|nd|rd|th)?|'+'|'.join(re.escape(v).replace(r'\-',r'[-\s]+') for v in sorted(ORDINAL[1:],key=len,reverse=True))+r')'
+_YEAR=r'(?:\d{4}|(?:this|next|last)\s+year|(?:twenty|two thousand)\s+(?:'+'|'.join(re.escape(number(y)).replace(r'\-',r'[-\s]+') for y in range(99,19,-1))+r'))'
+DATE_ONLY=r'(?:on\s+)?(?:day before yesterday|yesterday|today|tomorrow|tonight|(?:(?:next|this)\s+)?'+WEEK+r'|\d{4}-\d{2}-\d{2}|'+MONTH+r'\.?\s+'+_DAY+r'(?:,?\s+'+_YEAR+r')?|(?:the\s+)?'+_DAY+r'\s+(?:of\s+)?'+MONTH+r'(?:,?\s+'+_YEAR+r')?)'
 
 def selection_only(text):
     t=' '.join(text.lower().strip().rstrip('.!?').replace(',','').split())
@@ -14,6 +18,10 @@ def fields(bot,text):
     active=bot.reserving or bot.reservation_changes.active
     expected=getattr(bot,'_awaiting_slot',None)
     t=' '.join(text.lower().strip().rstrip('.!?').split())
+    if os.getenv('RECEPTIONIST_DECISION_PROTOCOL','baseline')=='baseline':
+        from booking_fastpath import fields as booking_fields
+        combined=booking_fields(bot,text)
+        if combined is not None:return combined
     if bot.reserving:
         from name_spelling import spelled_name
         spelling=spelled_name(text,getattr(bot,'slots',{}).get('name'))

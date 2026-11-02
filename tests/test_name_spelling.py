@@ -2,6 +2,14 @@ from unittest.mock import Mock
 import pytest
 import chat_api as api
 from name_spelling import spelled_name
+
+
+def test_asr_as_an_connector_keeps_letter_corroboration():
+ from name_spelling import spelled_components
+ assert spelled_components('First name T as an tiger, E as an elephant, S as an sun, T as an tiger.')=={'first':'Test'}
+ assert spelled_components('Last name G as in garden, U as an umbrella, E as an elephant, S as in Sun, T as in tiger.')=={'last':'Guest'}
+ assert spelled_components('First name D as an Tiger E S T.') is None
+ assert spelled_name('Is an elephant allowed in the restaurant?') is None
 from tests.test_customer_feedback import client,say
 
 @pytest.mark.parametrize('text,expected',[
@@ -42,7 +50,7 @@ def test_unclear_correction_cannot_confirm_old_name(client):
  b.reserving=b.awaiting_confirmation=True;b.slots={'name':'Tast Guest','phone':'2025550173','party_size':2,'date':'2027-02-17','time':'19:00'}
  b.tools.book_table=Mock(side_effect=AssertionError('Must not book unclear name'))
  r=say(client,sid,'No, let me spell my name.')
- assert 'spell your first name' in r['reply'] and not b.awaiting_confirmation and 'name' not in b.slots
+ assert 'say your name again' in r['reply'] and not b.awaiting_confirmation and 'name' not in b.slots
  say(client,sid,'Yes');b.tools.book_table.assert_not_called()
 
 def test_mixed_changes_do_not_take_name_only_fastpath():

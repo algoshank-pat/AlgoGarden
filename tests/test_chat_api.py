@@ -211,9 +211,11 @@ def test_new_voice_booking_explicitly_asks_phone_then_name(client,monkeypatch):
     def say(text):return client.post(f'/api/sessions/{sid}/turns',json={'request_id':str(uuid4()),'text':text}).json()
     assert say('Can I book a table for two on December 1 at half past eight?')['reply']=='Do you have a reservation with us?'
     assert say('No.')['reply']=='Lemme help you with the reservation. What phone number can I use for your reservation?'
-    assert say('9900112233')['reply']=='May I have your name for the reservation?'
+    assert 'May I have your name' in say('9900112233')['reply']
     assert bot.tools.booking_store().list(bot.tools.business_id)==[]
     reply=say('Alex.')['reply']
+    assert 'Alex' in reply and 'name correct' in reply and 'name' not in bot.slots
+    reply=say('Yes, please.')['reply']
     assert 'under Alex' in reply and '20:30' in reply and 'correct' in reply.lower()
     assert bot.tools.booking_store().list(bot.tools.business_id)==[]
     say('Yes, please.')

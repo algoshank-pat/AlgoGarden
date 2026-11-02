@@ -10,7 +10,7 @@ from routing import repeat_or_handoff
 
 
 def change_intent(text: str) -> str | None:
-    match=re.search(r'\b(cancel|modify|change|update|reschedule|edit)\s+(?:(?:my|our|the|this|a|an|existing)\s+)*(?:reservation|booking|table|it)\b',text.lower())
+    match=re.search(r'\b(cancel|modify|change|update|reschedule|edit|move)\s+(?:(?:my|our|the|this|a|an|existing)\s+)*(?:reservation|booking|table|it)\b',text.lower())
     if match:return 'cancel' if match.group(1)=='cancel' else 'update'
     if re.search(r'\b(check|find|look up|view|see|lookup)\b.*\b(reservations?|bookings?|table)\b',text.lower()):return 'lookup'
     return None

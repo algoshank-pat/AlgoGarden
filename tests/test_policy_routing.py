@@ -67,6 +67,9 @@ def test_gate_and_readback_resume_need_explicit_confirmation(client,channel):
  say(client,sid,'May I bring an outside birthday cake?')
  assert pending_state(b)==before
  reply=say(client,sid,'Yes')
+ from conversation_followup import INVITE
+ assert reply['reply']==INVITE and pending_state(b)==before
+ reply=say(client,sid,'No more questions')
  assert 'confirm the original table' in reply['reply'] and pending_state(b)==before
  b.tools.book_table.assert_not_called()
 
@@ -94,6 +97,9 @@ def test_unfamiliar_policy_can_escape_voice_gate_with_one_shared_decision(client
  b.menu_agent.tools.search_knowledge=Mock(return_value={'relevant':True,'chunks':[{'source':'vouchers.md','text':'Gift vouchers require advance arrangements.'}]})
  result=say(client,sid,'Do you offer gift vouchers?')
  assert result['routing']['intent']=='policy' and result['sources']==['vouchers.md']
- assert 'Returning to your original request' in result['reply'] and 'anything else' not in result['reply']
+ from conversation_followup import QUESTION
+ assert result['reply']=='Gift vouchers require advance arrangements. '+QUESTION
+ returned=say(client,sid,'No more questions')
+ assert 'Returning to your reservation.' in returned['reply'] and 'Do you already have a reservation' in returned['reply']
  assert s.pending_reservation_request and not b.reserving and not b.reservation_changes.active
  b.chat.assert_called_once();b.menu_agent.chat.assert_not_called()

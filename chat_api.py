@@ -5,6 +5,7 @@ import sqlite3
 import os
 import time
 import re
+from datetime import datetime, timezone, timedelta
 from dataclasses import asdict
 from dataclasses import dataclass, field
 from threading import Lock
@@ -64,20 +65,82 @@ class Session:
     pending_reservation_request: str | None = None
     stopped: bool = False
     awaiting_restart: bool = False
+    awaiting_reservation_return: bool = False
+    awaiting_additional_question: bool = False
+    awaiting_staff_offer: bool = False
+    awaiting_booking_offer: bool = False
+    booking_offer_made: bool = False
+    reservation_receipts: list[dict] = field(default_factory=list)
+    separate_booking_request: str | None = None
+    conversation_wait: dict | None = None
+    wait_return_gate: bool = False
     survey: dict = field(default_factory=lambda: {'status':'not_offered','rating':None})
 
 
 sessions: dict[str, Session] = {}
 
+from conversation_followup import QUESTION as RETURN_TO_RESERVATION
+
+
+def reservation_return_turn(session, text):
+    """Assent to returning is navigation, never booking authorization."""
+    if not session.awaiting_reservation_return:
+        return None
+    bot = session.bot
+    from conversation_followup import pending_work,resume_pending,no_more_questions,INVITE
+    if not pending_work(session):
+        session.awaiting_reservation_return=False
+        return None
+    from conversation_controls import normalized, clear_assent
+    from conversation_memory import acknowledgement
+    from information_requests import resume_reservation
+    choice = normalized(text)
+    resume = resume_reservation(text) or choice in {
+        'continue', 'resume', 'lets continue', 'let us continue',
+        'yes lets continue', 'yes let us continue', 'yes continue',
+        'okay continue', 'go ahead', 'back to the reservation',
+    }
+    if resume or no_more_questions(text):
+        return resume_pending(session)
+    if clear_assent(text) or acknowledgement(text) or choice in {'not yet','i have another question'}:
+        session.awaiting_reservation_return=False
+        session.awaiting_more_help=False;session.awaiting_additional_question=True
+        bot.last_decision = Decision('other', 'rule', 'more_questions', 'Keep the reservation draft while inviting another question.')
+        return INVITE, []
+    session.awaiting_reservation_return=False
+    return None
+
 
 class TurnRequest(BaseModel):
     request_id: UUID
     text: str = Field(min_length=1, max_length=2000)
-    input_kind: Literal['text', 'unrecognized_audio'] = 'text'
+    input_kind: Literal['text', 'unrecognized_audio', 'timeout'] = 'text'
+    wait_token: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
     channel: Literal['chat', 'voice'] = 'chat'
+
+
+@app.post('/api/sessions/{session_id}/waits/{token}/arm')
+def arm_wait(session_id:UUID,token:str):
+    session=sessions.get(str(session_id))
+    if session is None:raise HTTPException(404,'Conversation not found.')
+    with session.turn_lock:
+        wait=session.conversation_wait
+        if session.stopped or session.bot.ended or not wait or wait['token']!=token:raise HTTPException(409,'Wait is no longer active.')
+        from conversation_waits import clock
+        if wait['deadline'] is None:wait['deadline']=clock()+wait['delay_ms']/1000
+        return {'remaining_ms':max(0,(wait['deadline']-clock())*1000)}
+
+
+@app.post('/api/sessions/{session_id}/waits/{token}/cancel')
+def cancel_wait(session_id:UUID,token:str):
+    session=sessions.get(str(session_id))
+    if session is None:raise HTTPException(404,'Conversation not found.')
+    with session.turn_lock:
+        if session.conversation_wait and session.conversation_wait['token']==token:session.conversation_wait=None
+    return {'cancelled':True}
 
 
 @app.post('/api/sessions/{session_id}/feedback/voice-notes/{note_id}')
@@ -107,7 +170,9 @@ def warm_voice_model():
     started=time.perf_counter()
     response=ollama.Client(timeout=120).chat(model=MODEL,messages=[],think=False,keep_alive=os.getenv('OLLAMA_KEEP_ALIVE','30m'),
         options={'num_ctx':int(os.getenv('OLLAMA_NUM_CTX','2048')),'num_predict':1})
-    return {'ready':True,'model':MODEL,'elapsed_ms':round((time.perf_counter()-started)*1000)}
+    from browser_voice import warm_audio
+    warm_audio(f"Thank you for calling {restaurant['name']}. How can I help you today?")
+    return {'ready':True,'model':MODEL,'speech_ready':True,'elapsed_ms':round((time.perf_counter()-started)*1000)}
 
 
 @app.get('/api/restaurant')
@@ -132,7 +197,12 @@ def create_session(request: CreateSessionRequest | None = None) -> dict:
         if hasattr(sessions[session_id].bot, 'tools'):
             sessions[session_id].bot.tools.session_id = session_id
             sessions[session_id].bot.tools.booking_source = 'phone' if sessions[session_id].channel=='voice' else 'chat'
-        return {'session_id': session_id,'call_started_at':sessions[session_id].call_started_at,
+        from voice.phrases import spoken_text
+        greeting=(f"Thank you for calling {restaurant['name']}. How can I help you today?" if sessions[session_id].channel=='voice'
+                  else f"Thanks for contacting {restaurant['name']}. How can I help?")
+        from owner_transcript import lifecycle
+        lifecycle(audit,session_id,sessions[session_id].channel,'greeting',spoken_text(greeting) if sessions[session_id].channel=='voice' else greeting)
+        return {'session_id': session_id,'spoken_greeting':spoken_text(greeting) if sessions[session_id].channel=='voice' else None,'call_started_at':sessions[session_id].call_started_at,
                 'timezone':restaurant.get('timezone','Asia/Kolkata'),
                 'greeting': (f"Thank you for calling {restaurant['name']}. How can I help you today?" if sessions[session_id].channel=='voice'
                              else f"Thanks for contacting {restaurant['name']}. How can I help?")}
@@ -152,6 +222,10 @@ def stop_session(session_id: UUID):
     with lock:
         session=sessions.get(str(session_id))
         if session is None:raise HTTPException(404,'Session not found.')
+        session.conversation_wait=None
+        if not session.stopped:
+            from owner_transcript import lifecycle
+            lifecycle(audit,session_id,session.channel,'stopped','Customer ended the call.' if session.channel=='voice' else 'Customer stopped the chat.')
         session.stopped=True
         return {'stopped':True,'turn_in_progress':session.turn_lock.locked(),
                 'message':'Conversation stopped. A request already processing may still complete. Saved reservations remain unchanged.'}
@@ -196,8 +270,23 @@ def _admit_turn(session_id: UUID, session: Session, request: TurnRequest) -> dic
         return result
     if len(session.replies) >= MAX_TURNS:
         raise HTTPException(409, 'Conversation limit reached; start a new chat.')
-    with scheduler.slot() as queue_wait_ms:
-        return _execute_turn(session_id, session, request, queue_wait_ms)
+    import turn_tracing as tracing
+    prior_workflow=tracing.workflow(session.bot)
+    with tracing.stage(session_id,request.request_id,'backend.total',session.channel) as trace:
+        tracing.label_turn(trace,session.bot,request.text,prior=prior_workflow)
+        tracing.set_payload(trace,inputs={'text':request.text,'input_kind':request.input_kind,'channel':session.channel})
+        try:
+            with scheduler.slot() as queue_wait_ms:
+                # Admission remains held while the turn executes.
+                tracing.record(session_id,request.request_id,'queue.wait',queue_wait_ms,trace,
+                    datetime.now(timezone.utc)-timedelta(milliseconds=queue_wait_ms))
+                result=_execute_turn(session_id, session, request, queue_wait_ms)
+            tracing.label_turn(trace,session.bot,request.text,result,prior_workflow)
+            tracing.set_payload(trace,outputs={'reply':result.get('reply'),'spoken_reply':result.get('spoken_reply'),'routing':result.get('routing'),'structured':result.get('structured'),'ended':result.get('ended')})
+            result['performance_trace_id']=str(trace.id) if trace else None
+            result['performance_use_case']=trace.extra.get('metadata',{}).get('use_case') if trace else None
+            return result
+        finally:tracing.finish(trace,channel=session.channel)
 
 
 def explicit_booking_command(text):
@@ -228,9 +317,12 @@ def voice_reservation_turn(session, text):
                 value=decide(bot,text)
                 if value['relevance']=='relevant' and value['intent'] in {'policy','menu','hours','location_parking'}:
                     reply,tools=bot.turn(text)
-                    return reply+' Returning to your original request, do you have a reservation with us?',tools
+                    return reply,tools
         yes=bool(re.match(r'^(yes|yeah|yep|i do)\b',choice))
         no=bool(re.match(r'^(no|nope|i dont|i do not)\b',choice))
+        if (yes or no) and (re.search(r'\b(maybe|perhaps|not sure|unsure|cannot remember|cant remember)\b',choice) or (yes and re.search(r'\bno\b',choice)) or (no and re.search(r'\b(yes|yeah|yep)\b',choice))):
+            bot.last_decision=Decision('reservation','rule',reasoning='Clarify an ambiguous existing/new answer without changing the saved request.')
+            return 'Do you already have a reservation? Please say yes or no.',[]
         if yes and not no:
             session.pending_reservation_request=None
             bot.slots.clear()
@@ -248,7 +340,11 @@ def voice_reservation_turn(session, text):
             # workflow rather than reclassifying their negative answer.
             bot.reserving=True
             bot._dietary_followup=False
-            reply,tools=bot.turn(original+'\n'+text)
+            # Only a closed, state-dependent negative answer can be omitted
+            # from extraction. Keep any correction or additional intent in the
+            # shared structured decision instead of silently dropping it.
+            pure_no=bool(re.fullmatch(r"(?:no(?:[, ]+no)*|nope|no thanks|no thank you|no[, ]+i(?: am|\x27m) not|no[, ]+i (?:do not|don\x27t|dont)(?: have (?:a |an existing )?reservation| have one)?)[.!]*",text.strip(),re.I))
+            reply,tools=bot.turn(original if pure_no else original+'\n'+text)
             if reply=='What phone number should we use to check for an existing reservation?':
                 reply='What phone number can I use for your reservation?'
             if not bot.ended:
@@ -257,7 +353,8 @@ def voice_reservation_turn(session, text):
         return repeat_or_handoff(bot)
     if (keyword_intent(text)=='reservation' and not change_intent(text)
             and not getattr(bot,'reserving',False) and not bot.reservation_changes.active):
-        session.pending_reservation_request=text
+        from booking_context import selected_booking_request
+        session.pending_reservation_request=selected_booking_request(bot,text) or text
         bot.last_trace_id=None
         bot.last_decision=Decision('reservation','rule',reasoning='Ask whether to look up an existing reservation or create a new one.')
         audit.event('reservation.existing_or_new_asked',{})
@@ -269,6 +366,7 @@ def conversation_restart(session_id, session, text):
     choice=re.sub(r'[^a-z\s]','',text.lower()).strip()
     if session.awaiting_restart:
         if re.match(r'^(yes|yeah|yep|sure|confirm|please do|go ahead)\b',choice):
+            session.separate_booking_request=None
             session.bot=new_bot()
             session.bot.trace_session_id=str(session_id)
             if hasattr(session.bot,'tools'):
@@ -276,6 +374,7 @@ def conversation_restart(session_id, session, text):
                 session.bot.tools.booking_source='phone' if session.channel=='voice' else 'chat'
             session.pending_reservation_request=None
             session.awaiting_more_help=False
+            session.awaiting_booking_offer=session.booking_offer_made=False
             session.voice_failures=0
             session.awaiting_restart=False
             session.bot.last_trace_id=None
@@ -304,18 +403,52 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
     if session.stopped:
         raise HTTPException(409, 'Conversation stopped before processing.')
     key = str(request.request_id)
+    from conversation_waits import control,expire
+    if request.input_kind=='timeout':
+        try:boundary=expire(session,request.wait_token)
+        except ValueError as e:raise HTTPException(409,str(e))
+    else:
+        session.conversation_wait=None
+        boundary=None
+        if request.input_kind=='text':
+            from booking_validation import validate_turn
+            boundary=validate_turn(session.bot,request.text)
+            if boundary is None:boundary=control(session,request.text)
     started = time.perf_counter()
     events = []
+    from conversation_memory import reservation_status
+    session.bot._has_saved_reservation=any(r['business_id']==session.bot.tools.business_id for r in session.reservation_receipts)
+    session.bot._completed_status=lambda:reservation_status(session,'Is my reservation confirmed?')
     try:
         with audit.capture(events):
             from customer_feedback import handle as feedback_turn,offer as offer_feedback
             from customer_intent import additional_questions,ADDITIONAL_QUESTIONS_REPLY
+            from conversation_memory import end_request,acknowledgement,reservation_status
+            explicit_end=request.input_kind!='unrecognized_audio' and end_request(request.text)
             invitation=request.input_kind!='unrecognized_audio' and not session.bot.ended and additional_questions(request.text)
-            feedback=None if invitation else feedback_turn(session,request.text,request.input_kind=='unrecognized_audio')
-            if invitation:
+            from conversation_followup import staff_offer_turn
+            staff_reply=None if (explicit_end or invitation or boundary is not None or request.input_kind!='text' or session.bot.ended or session.awaiting_restart) else staff_offer_turn(session,request.text)
+            from conversation_followup import booking_offer_turn
+            booking_offer_reply=None if (explicit_end or invitation or boundary is not None or request.input_kind!='text' or session.bot.ended or session.awaiting_restart) else booking_offer_turn(session,request.text)
+            feedback=None if invitation or explicit_end or staff_reply is not None or booking_offer_reply is not None else feedback_turn(session,request.text,request.input_kind=='unrecognized_audio')
+            if explicit_end:
+                session.separate_booking_request=None
+                session.awaiting_booking_offer=False
+                session.bot.ended=True
+                session.pending_reservation_request=None
+                session.awaiting_more_help=session.awaiting_reservation_return=session.awaiting_additional_question=session.awaiting_restart=False
+                session.bot.last_trace_id=None;session.bot.menu_agent.last_sources=[]
+                session.bot.last_decision=Decision('other','rule','end_conversation','End this call without changing any saved reservation.')
+                reply,tools=session.farewell,[]
+                audit.event('voice.goodbye',{})
+            elif invitation:
                 from information_requests import remember_readback
+                session.awaiting_booking_offer=False
                 remember_readback(session.bot)
                 session.awaiting_more_help=False
+                session.awaiting_reservation_return=False
+                session.awaiting_additional_question=True
+                session.awaiting_staff_offer=False
                 session.bot.failures=session.voice_failures=0
                 if session.survey['status'] in {'offered','awaiting_comment','awaiting_rating'}:
                     session.survey.update(status='skipped',completed_at=audit.now())
@@ -324,6 +457,13 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
                 session.bot.menu_agent.last_sources=[]
                 session.bot.last_decision=Decision('other','rule','additional_questions','Invite the customer to ask; preserve the pending reservation without inference or business tools.')
                 reply,tools=ADDITIONAL_QUESTIONS_REPLY,[]
+            elif staff_reply is not None:
+                reply,tools=staff_reply
+            elif booking_offer_reply is not None:
+                reply,tools=booking_offer_reply
+            elif boundary is not None:
+                reply,tools=boundary
+                session.bot.last_trace_id=None
             elif feedback is not None:
                 reply,tools=feedback
                 session.bot.last_trace_id=None
@@ -338,14 +478,25 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
                 session.voice_failures = 0
                 choice=re.sub(r'[^a-z0-9\s]','',request.text.lower()).strip()
                 farewell=choice in {'bye','goodbye','quit','exit','thank you goodbye','stop','okay stop','ok stop','stop the call','end the call'}
-                finished=session.awaiting_more_help and (choice in {'no','no thanks','no thank you','nothing else','thats all','that is all','im all set','thank you','thanks','no thats all','no thank you thats all'} or bool(re.fullmatch(r'no(?: (?:thanks|thank you))?(?: (?:that is all|thats all|nothing else|thats it))?',choice)))
+                from conversation_followup import no_more_questions,pending_work,resume_pending
+                finished=(session.awaiting_more_help or session.awaiting_additional_question or session.awaiting_reservation_return) and no_more_questions(request.text)
                 unfinished=incomplete_request(request.text)
                 irrelevant=irrelevant_question(session.bot,request.text)
                 restart=None if unfinished or irrelevant else conversation_restart(session_id,session,request.text)
+                status_reply=None if unfinished or irrelevant or restart is not None else reservation_status(session,request.text)
+                returning=None if unfinished or irrelevant or restart is not None or status_reply is not None else reservation_return_turn(session,request.text)
+                from conversation_memory import post_confirmation_request
+                post_booking=None if unfinished or irrelevant or restart is not None or status_reply is not None or returning is not None else post_confirmation_request(session,request.text)
+                from information_requests import confirmation_control
+                from conversation_memory import completed_booking,follow_up_question
+                dietary_reply=bool(getattr(session.bot,'_dietary_followup',False)) and not completed_booking(session) and confirmation_control(request.text)
+                more_questions=(session.awaiting_more_help or session.awaiting_additional_question) and acknowledgement(request.text) and not dietary_reply
+                if not more_questions:session.awaiting_additional_question=False
                 from information_requests import wants_information
                 from customer_intent import declined_booking,abandon_draft,dietary_request
                 from policy_requests import policy_question
                 if declined_booking(request.text):
+                    session.separate_booking_request=None
                     abandon_draft(session.bot)
                     session.pending_reservation_request=None
                     session.awaiting_restart=False
@@ -359,23 +510,30 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
                     reply,tools=repeat_or_handoff(session.bot)
                 elif restart is not None:
                     reply,tools=restart
-                elif session.channel=='voice' and session.pending_reservation_request is not None and re.match(r'^(yes|yeah|yep|i do|no|nope|i dont|i do not)\b',choice) and not dietary_request(request.text):
+                elif status_reply is not None:
+                    reply,tools=status_reply
+                elif returning is not None:
+                    reply,tools=returning
+                elif finished and pending_work(session):
+                    reply,tools=resume_pending(session)
+                elif post_booking is not None:
+                    reply,tools=post_booking
+                elif more_questions:
+                    session.awaiting_more_help=False;session.awaiting_additional_question=True
+                    session.bot._dietary_followup=False
+                    session.bot.last_trace_id=None;session.bot.menu_agent.last_sources=[]
+                    session.bot.last_decision=Decision('other','rule','additional_question_consent','An acknowledgement invites the next question; it does not request a menu or booking.')
+                    reply,tools='Go ahead. What else would you like to ask?',[]
+                elif session.channel=='voice' and session.pending_reservation_request is not None and re.match(r'^(yes|yeah|yep|i do|no|nope|i dont|i do not)\b',choice) and not dietary_request(request.text) and not dietary_reply:
                     session.bot._dietary_followup=False
                     reply,tools=voice_reservation_turn(session,request.text)
-                elif wants_information(session.bot,request.text) and not farewell:
+                elif wants_information(session.bot,request.text) and not farewell and not finished:
                     session.awaiting_more_help=False
                     voice_pending=session.channel=='voice' and session.pending_reservation_request is not None
                     if voice_pending and not dietary_request(request.text) and not policy_question(request.text) and (change_intent(request.text) or explicit_booking_command(request.text)):
                         reply,tools=voice_reservation_turn(session,request.text)
                     else:reply,tools=session.bot.turn(request.text)
-                    enquiry_pending=getattr(session.bot,'_availability_enquiry',None) is not None
-                    active=session.bot.reserving or session.bot.reservation_changes.active or session.pending_reservation_request is not None
-                    if session.pending_reservation_request is not None and not enquiry_pending and set(tools)&{'check_table','search_knowledge','check_dish'}:
-                        reply+=' Returning to your original request, do you have a reservation with us?'
-                    elif not active and not enquiry_pending and set(tools)&{'check_table','search_knowledge','check_dish'}:
-                        reply+=' Is there anything else I can help you with?'
-                        session.awaiting_more_help=True
-                elif (finished or (farewell and choice not in {'quit','exit','stop','okay stop','ok stop','stop the call','end the call'})) and session.survey['status']=='not_offered' and not session.bot.ended:
+                elif (finished or (farewell and choice not in {'quit','exit','stop','okay stop','ok stop','stop the call','end the call'})) and session.survey['status'] in {'not_offered','skipped'} and not session.bot.ended:
                     reply,tools=offer_feedback(session)
                     session.bot.last_trace_id=None
                     session.bot.last_decision=Decision('other','rule','customer_feedback','Offer optional feedback after caller needs are complete.')
@@ -394,14 +552,18 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
                     session.awaiting_more_help=False
                     reply, tools = (voice_reservation_turn(session,request.text) if session.channel=='voice'
                                     else session.bot.turn(request.text))
-                    completed=reply.startswith(('Your table is booked','Your reservation is updated','Your reservation has been cancelled'))
-                    answered=bool(set(tools)&{'get_hours','get_location','get_menu','check_dish','get_specials','search_knowledge'})
-                    if not session.bot.ended and session.pending_reservation_request is None and 'transfer_to_human' not in tools and (completed or answered):
-                        reply+=' Is there anything else I can help you with?'
-                        session.awaiting_more_help=True
-                if reply!=INCOMPLETE_REPLY and 'transfer_to_human' not in tools:
+                from conversation_followup import after_answer
+                reply=after_answer(session,reply,tools)
+                if not reply.startswith(INCOMPLETE_REPLY) and 'transfer_to_human' not in tools:
                     session.bot.failures=0
                     session.voice_failures=0
+        # The fallback offers staff help. Its short replies must not be sent
+        # back to retrieval with the previous policy as assumed user intent.
+        from knowledge import FALLBACK as POLICY_STAFF_OFFER
+        session.awaiting_staff_offer=(reply==POLICY_STAFF_OFFER or (session.awaiting_staff_offer and request.input_kind=='unrecognized_audio')) and not session.bot.ended and 'transfer_to_human' not in tools
+        if session.awaiting_staff_offer:
+            session.awaiting_more_help=session.awaiting_additional_question=session.awaiting_reservation_return=False
+            session.conversation_wait=None
         handoff = 'transfer_to_human' in tools
         if handoff:
             # CLI transfer is an event, not a telephone connection in this channel.
@@ -409,6 +571,7 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
             if session.survey['status']=='not_offered' and getattr(session.bot,'failures',0)<4:
                 invitation,_=offer_feedback(session)
                 reply+=' '+invitation
+        if handoff or session.bot.ended or session.awaiting_restart:session.conversation_wait=None
         result = {'reply': reply, 'ended': session.bot.ended,
                   'handoff': handoff, 'staff_phone': restaurant.get('phone') if handoff else None,
                   'latency_ms': round((time.perf_counter() - started) * 1000)}
@@ -421,12 +584,20 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
         # A write might have succeeded before an error; never replay this turn automatically.
         logging.getLogger(__name__).exception('Chat turn failed')
         session.bot.ended = True
+        session.conversation_wait=None
         result = {'reply': 'Something went wrong. Please contact staff to check whether your request was completed.',
                   'ended': True, 'handoff': True, 'staff_phone': restaurant.get('phone'),
                   'failed': True,
                   'latency_ms': round((time.perf_counter() - started) * 1000)}
     session.touched = time.monotonic()
     result['queue_wait_ms'] = queue_wait_ms
+    if session.channel=='voice':
+        from voice.phrases import spoken_text
+        result['spoken_reply']=spoken_text(result['reply'])
+    active=bool(getattr(session.bot,'reserving',False) or getattr(getattr(session.bot,'reservation_changes',None),'active',False))
+    result['voice_input']={'expected_field':getattr(session.bot,'_awaiting_slot',None) if active else None,
+                           'name_confirmation':bool(getattr(session.bot,'_name_candidate',None)) if active else False}
+    result['conversation_wait']=({k:v for k,v in session.conversation_wait.items() if k!='deadline'} if session.conversation_wait else None)
     result['request_id'] = key
     from structured_io import StructuredTurn
     calls={}
@@ -436,10 +607,15 @@ def _execute_turn(session_id: UUID, session: Session, request: TurnRequest, queu
             call=calls.setdefault(details['call_id'],{})
             for field,value in details.items():
                 if field in {'call_id','schema_version','component'} or value is not None:call[field]=value
+    from conversation_memory import remember_committed
+    remember_committed(session,calls.values())
     result['structured']=StructuredTurn(session_id=str(session_id),request_id=key,channel=session.channel,
         input={'text':request.text,'kind':request.input_kind},
-        output={'reply':result['reply'],'ended':result['ended'],'handoff':result.get('handoff',False),'failed':result.get('failed',False),'survey':dict(session.survey)},
+        output={'reply':result['reply'],**({'spoken_reply':result['spoken_reply']} if 'spoken_reply' in result else {}),'ended':result['ended'],'handoff':result.get('handoff',False),'failed':result.get('failed',False),'survey':dict(session.survey)},
         routing=result.get('routing'),tools_called=tools if 'tools' in locals() else [],calls=list(calls.values())).model_dump(mode='json')
+    from owner_transcript import provenance
+    result['response_sources']=provenance(result,events)
+    result['structured']['output']['response_sources']=result['response_sources']
     names={event['name'] for event in events}
     result['restart_state']=('confirmed' if 'conversation.restarted' in names else
                              'requested' if session.awaiting_restart else
@@ -496,12 +672,20 @@ def owner_dashboard() -> dict:
     with audit.io_lock:
         try:
             records = audit.read(audit.CALLS_FILE)
+            from owner_transcript import transcript
+            lifecycle_rows=audit.read(audit.CALLS_FILE.with_name('conversation_lifecycle.jsonl'))
+            lifecycle_by_session={}
+            for row in lifecycle_rows:lifecycle_by_session.setdefault(row['session_id'],[]).append(row)
             reviews = {row['target']: row['status'] for row in audit.read(audit.REVIEWS_FILE)}
             notes={}
             for note in audit.read(audit.NOTES_FILE):notes.setdefault(note['session_id'],[]).append(note)
             grouped = {}
             for row in records:
                 grouped.setdefault(row['session_id'], []).append(row)
+            for sid,rows in lifecycle_by_session.items():
+                if sid not in grouped:
+                    first=rows[0]
+                    grouped[sid]=[{'session_id':sid,'request_id':'lifecycle','at':first['at'],'channel':first['channel'],'caller_text':'','result':{'reply':'','routing':{'intent':'other','reason':'session_lifecycle'}},'events':[]}]
             calls = []
             for session_id, turns in grouped.items():
                 latest = turns[-1]
@@ -519,6 +703,7 @@ def owner_dashboard() -> dict:
                     'intent': route.get('intent', 'unknown'), 'outcome': outcome,
                     'latency_ms': result.get('latency_ms', 0),
                     'turns': turns, 'events': events, 'review': reviews.get('call:'+session_id, 'New'),
+                    'transcript':transcript([t for t in turns if t.get('request_id')!='lifecycle'],lifecycle_by_session.get(session_id,[])),
                     'follow_up_notes':notes.get(session_id,[]),
                     'feedback':next((t['result']['survey'] for t in reversed(turns) if t['result'].get('survey')),None)})
             calls.sort(key=lambda call: call['at'], reverse=True)
@@ -690,3 +875,51 @@ def save_review(request: ReviewRequest) -> dict:
             raise HTTPException(503, 'Review status could not be saved.')
     return request.model_dump()
 
+
+
+class BrowserTurnTiming(BaseModel):
+    request_id: UUID
+    stage: Literal['customer.audio_capture','speech.endpoint_delay','browser.preview_wait','browser.stt_roundtrip','browser.backend_roundtrip','browser.reply_start','browser.tts_to_first_playback','browser.endpoint_detected','browser.recognition_request','browser.recognition_complete','browser.backend_request','browser.backend_reply','browser.speech_request','browser.first_audio_received','browser.playback_started']
+    duration_ms: float = Field(ge=0,le=3600000,allow_inf_nan=False)
+
+
+class BrowserCaptureObservation(BaseModel):
+    request_id: UUID | None = None
+    phase: Literal['ready','agent','playing','listening','manual_mute','ended']
+    track_enabled: bool
+    track_live: bool
+    manually_muted: bool
+    audio_context: Literal['running','suspended','closed','interrupted','none']
+    audio_frames_received: bool
+
+
+@app.post('/api/sessions/{session_id}/capture-observations')
+def browser_capture_observation(session_id: UUID, observation: BrowserCaptureObservation):
+    # Content-free local capture diagnostics, separate from transcripts and audio.
+    with lock: session=sessions.get(str(session_id))
+    if session is None:raise HTTPException(404,'Conversation not found.')
+    if observation.request_id is not None and str(observation.request_id) not in session.replies:
+        raise HTTPException(409,'Turn has not completed.')
+    try:
+        audit.append(audit.CALLS_FILE.with_name('voice_capture.jsonl'),{'at':audit.now(),'session_id':str(session_id),**observation.model_dump(mode='json')})
+    except OSError:raise HTTPException(503,'Capture observation could not be saved.')
+    return {'saved':True}
+
+@app.post('/api/sessions/{session_id}/timings')
+def browser_turn_timing(session_id: UUID, measurement: BrowserTurnTiming):
+    import turn_tracing as tracing
+    with lock: session=sessions.get(str(session_id))
+    if session is None:raise HTTPException(404,'Conversation not found.')
+    if str(measurement.request_id) not in session.replies:raise HTTPException(409,'Turn has not completed.')
+    run=tracing.root_for(session_id,measurement.request_id,session.channel)
+    if tracing.record(session_id,measurement.request_id,measurement.stage,measurement.duration_ms,run) is False:
+        raise HTTPException(503,'Timing record could not be saved.')
+    if measurement.stage=='browser.reply_start':tracing.finish(run,playback_started=True)
+    return {'saved':True,'tracing_enabled':__import__('observability').enabled()}
+
+@app.get('/api/developer/tracing/status')
+def tracing_status():
+    import observability
+    return {'enabled':observability.enabled(),'destination':observability.destination_status(),'project':os.getenv('LANGSMITH_PROJECT'),
+            'payload_mode':os.getenv('LANGSMITH_PAYLOAD_MODE','summary'),
+            'local_timing_file':'turn_timings.jsonl','pending_exports':observability._exports.unfinished_tasks}

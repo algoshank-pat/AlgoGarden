@@ -51,6 +51,10 @@ def parse_date(text, today=None):
     today = today or date.today()
     t = (text or "").strip().lower()
     t = re.sub(r'\bto\s+morrow\b','tomorrow',t)
+    # A named day without a year means this calendar year, never silently the
+    # next occurrence. Keep past dates intact so validation can explain them.
+    t = re.sub(r'\b(this|next|last)\s+year\b',
+               lambda m: str(today.year + {'this': 0, 'next': 1, 'last': -1}[m[1]]), t)
     # ASR may retain spoken day/year words instead of rendering digits.
     from voice.speech_text import ORDINAL, number
     for year in range(2099,2019,-1):
@@ -60,7 +64,7 @@ def parse_date(text, today=None):
     for day in sorted(range(1,32),key=lambda n:len(ORDINAL[n]),reverse=True):
         pattern=r'\b'+re.escape(ORDINAL[day]).replace(r'\-',r'[-\s]+')+r'\b'
         t=re.sub(pattern,str(day),t)
-    t=re.sub(r'^(?:on\s+)?the\s+','',t)
+    t=re.sub(r'^(?:on\s+)?(?:the\s+)?','',t)
     months = ('january', 'february', 'march', 'april', 'may', 'june',
               'july', 'august', 'september', 'october', 'november', 'december')
     month_numbers = {name: i for i, month in enumerate(months, 1)
@@ -78,13 +82,15 @@ def parse_date(text, today=None):
         year = int(named['year']) if named['year'] else today.year
         try:
             parsed = date(year, month, day)
-            if not named['year'] and parsed < today:
-                parsed = date(year + 1, month, day)
             return parsed
         except ValueError:
             return None
     if not t or "today" in t or "tonight" in t:
         return today
+    if re.search(r'\bday before yesterday\b',t):
+        return today - timedelta(days=2)
+    if re.search(r'\byesterday\b',t):
+        return today - timedelta(days=1)
     if "tomorrow" in t:
         return today + timedelta(days=1)
     for i, wd in enumerate(WEEKDAYS):
@@ -215,7 +221,7 @@ class Tools:
 
     @observed('get_location', 'tool')
     def get_location(self) -> dict:
-        return {k: self.r.get(k) for k in ("address", "landmark", "phone", "maps_link", "parking")}
+        return {k: self.r.get(k) for k in ("address", "voice_address", "landmark", "phone", "maps_link", "parking")}
 
     @observed('get_menu', 'tool')
     def get_menu(self, category: str = "") -> dict:
@@ -250,12 +256,14 @@ class Tools:
     def reservation_alternatives(self,day,hhmm,party_size,current=None):
         """One same-day ±1h choice, then the requested time on days +1/+2."""
         now=local_now(self.r)
+        from booking_validation import date_error
         base=datetime.combine(day,datetime.strptime(hhmm,'%H:%M').time())
         options=[]
         for group in ((base+timedelta(hours=1),base-timedelta(hours=1)),
                       (base+timedelta(days=1),),(base+timedelta(days=2),)):
             for candidate in group:
                 d=candidate.date();t=candidate.strftime('%H:%M')
+                if date_error(self.r,d):continue
                 if d<local_today(self.r) or (d==now.date() and t<=now.strftime('%H:%M')):continue
                 if WEEKDAYS[d.weekday()]==self.r['hours']['weekly_off'] or not self._in_shift(t,d):continue
                 if current:
@@ -268,6 +276,7 @@ class Tools:
         if not options:
             for offset in range(3):
                 candidate_day=day+timedelta(days=offset)
+                if date_error(self.r,candidate_day):continue
                 slots=[clock for shift in shifts_for(self.r,candidate_day).values()
                        for clock in (f'{m//60:02d}:{m%60:02d}' for m in range(
                            int(shift['open'][:2])*60+int(shift['open'][3:]),
@@ -327,8 +336,11 @@ class Tools:
         day=parse_date(target['date'],today=local_today(self.r))
         hhmm=parse_time(target['time'])
         party=target['party_size']
-        if not day or day<local_today(self.r) or not hhmm:
+        if not day or not hhmm:
             return {'valid':False,'reason':'a valid current or future date and time are required.'}
+        from booking_validation import date_error
+        horizon_error=date_error(self.r,day,hhmm)
+        if horizon_error:return {'valid':False,'reason':horizon_error}
         if type(party) is not int or not 1<=party<=self.r['seating']['max_party_size']:
             return {'valid':False,'reason':'that party size needs staff assistance.'}
         if not self._in_shift(hhmm,day):
@@ -384,6 +396,9 @@ class Tools:
         d, hhmm = parse_date(date, today=local_today(self.r)), parse_time(time)
         if not d or not hhmm:
             return {"booked": False, "error": "Could not understand the date or time."}
+        from booking_validation import date_error
+        horizon_error=date_error(self.r,d,hhmm)
+        if horizon_error and getattr(self,'booking_source','unknown')!='walk_in':return {'booked':False,'reason':horizon_error}
         if getattr(self,'booking_source','unknown')=='walk_in':
             from seating_time import has_arrived
             if not has_arrived(d.isoformat(),hhmm,getattr(self,'occupancy_now',None) or local_now(self.r)):
@@ -666,6 +681,12 @@ class Receptionist:
         self.menu_agent.last_sources = []
         if self.ended:
             return 'This call has been handed to staff.', []
+        from booking_validation import validate_turn
+        validation=validate_turn(self,user_text)
+        if validation is not None:return validation
+        from conversation_controls import handle
+        control=handle(self,user_text)
+        if control is not None:return control
         from customer_intent import dietary_request,dietary_turn,declined_booking,abandon_draft
         if declined_booking(user_text):
             abandon_draft(self)
@@ -761,6 +782,13 @@ class Receptionist:
                 if re.search(r'\b(address|where|location|directions|landmark)\b',user_text,re.I):
                     parking=(' '+result['parking']) if result.get('parking') and re.search(r'\b(park|parking|valet)\b',user_text,re.I) else ''
                     return 'A street address is not configured. The owner needs to supply the restaurant’s address; please contact the restaurant for directions.'+parking, ['get_location']
+            if getattr(self.tools,'booking_source','chat')=='phone':
+                parking=bool(re.search(r'\b(park|parking|valet)\b',user_text,re.I))
+                address=not parking or bool(re.search(r'\b(address|location|directions|landmark)\b|\bwhere (?:are you|is (?:the|your) restaurant)\b',user_text,re.I))
+                parts=[]
+                if address:parts.append(result.get('voice_address') or f"We’re at {result['address']}.")
+                if parking:parts.append(result.get('parking') or 'Please ask staff about parking.')
+                return ' '.join(parts), ['get_location']
             return f"We’re at {result['address']}. {result.get('parking') or 'Please ask staff about parking.'}", ['get_location']
         if intent == 'reservation':
             if self.reservation_changes.active:
@@ -768,6 +796,12 @@ class Receptionist:
             action=change_intent(user_text)
             if action and not self.reserving:
                 return self._start_reservation_change(action,user_text)
+            if (not self.reserving and getattr(self,'_has_saved_reservation',False)
+                    and not re.search(r'\b(?:new|another|separate|additional|second|extra)\s+(?:table|reservation|booking)\b',user_text,re.I)
+                    and getattr(self,'_completed_status',None)):
+                # A model label cannot override the completed dialogue phase.
+                status=self._completed_status()
+                if status is not None:return status
             return self._reservation(user_text)
         if self.unified_decisions and intent=='menu' and (decision.fields or {}).get('dish'):
             result=self.tools.check_dish(decision.fields['dish'])
@@ -784,6 +818,7 @@ class Receptionist:
         return self.menu_agent.turn(user_text, max_steps=max_steps, **({'direct':True} if self.unified_decisions or decision.source=='llm' else {}))
 
     def _start_reservation_change(self,action: str,text: str):
+        self._name_candidate=None;self._name_readback=None;self._name_parts={};self._paused=False;self._name_needs_readback=False
         self._availability_context=None
         self.reservation_changes.begin(action,self.slots.get('phone'))
         self.slots.clear()
@@ -797,9 +832,21 @@ class Receptionist:
         choice=text.strip().lower().rstrip('.!').replace(',','')
         was_confirming=self.awaiting_confirmation
         previous_slots=dict(self.slots)
+        from conversation_controls import clear_assent
+        if self.awaiting_confirmation and re.match(r'^\s*(?:yes|yeah|yep)\b',text,re.I) and not clear_assent(text):
+            from conversation_controls import booking_prompt
+            self._routed_fields=None
+            return 'I have not booked it yet. '+booking_prompt(self),[]
+        if getattr(self,'_offered_alternatives',[]) and not clear_assent(text):
+            # An affirmative followed by a question is not acceptance. Ignore
+            # times copied by the model from its previous suggestion.
+            if re.match(r'^\s*(?:yes|yeah|yep)\b',text,re.I):
+                self._routed_fields=None
+                return 'Would you like the suggested time? Please say yes, or tell me a different time.',[]
         from name_spelling import spelled_name
         spelling=spelled_name(text,self.slots.get('name'))
         if spelling is not None:
+            self._name_candidate=None;self._name_readback=None
             self.awaiting_confirmation=False
             self._information_readback=None
             self._information_readback_state=None
@@ -807,7 +854,7 @@ class Receptionist:
                 self.slots.pop('name',None)
                 self._awaiting_slot='name'
                 self.reserving=True
-                return 'Please spell your first name, say "last name," then spell your last name.',[]
+                return 'Could you say your name again?',[]
         correction_field=next((field for field,pattern in [('time',r'\btime\b'),('date',r'\b(date|day)\b'),('name',r'\bname\b'),('phone',r'\b(phone|number)\b'),('party_size',r'\b(guests|people|party size)\b')]
                                if re.search(pattern,choice)),None)
         if was_confirming and correction_field and re.search(r'\b(change|correct|different|wrong)\b',choice):
@@ -862,7 +909,10 @@ class Receptionist:
             if result.get('booked'):
                 self.reserving = False
                 self.slots.clear()
-                reference=f" Reference: {result['id'][:8]}." if result.get('id') else ''
+                self._name_parts={};self._name_candidate=None;self._name_readback=None;self._verified_name=None;self._name_needs_readback=False
+                if getattr(self.tools,'booking_source','chat')=='phone':
+                    return 'Your reservation is confirmed.', ['book_table']
+                reference=f" Reference: {result['id'][:8]}." if result.get('id') and getattr(self.tools,'booking_source','chat')!='phone' else ''
                 return f"Your table is booked for {result['date']} at {result['time']}.{reference}", ['book_table']
             if result.get('duplicate'):
                 self._existing_choice = True
@@ -898,6 +948,10 @@ class Receptionist:
             if len(offered)>1:return 'Which of the available alternatives would you like? Please choose the first, second or third option.',[]
             selected=dict(offered[0])
         option=re.search(r'\b(?:the )?(first|second|third|1st|2nd|3rd)\s+(?:option|one|suggestion)\b',text.lower())
+        if offered and not accept_single and not option and isinstance(selected,dict) and selected.get('time'):
+            from decision_evidence import clock_phrases
+            if not clock_phrases(text) and parse_time(text) is None:
+                return 'I have not selected an alternative. '+alternative_question(offered),[]
         if option and offered:
             number={'first':0,'second':1,'third':2,'1st':0,'2nd':1,'3rd':2}[option[1]]
             if number<len(offered):selected=offered[number]
@@ -937,9 +991,17 @@ class Receptionist:
                     if key == 'party_size' and type(value) is int:
                         self.slots[key] = value
                     elif key != 'party_size' and isinstance(value, str) and value.strip():
+                        if (key=='name' and getattr(self.tools,'booking_source','chat')=='phone' and not was_confirming
+                                and getattr(self,'_verified_name',None)!=value.strip()):
+                            self._name_candidate=value.strip();self._name_readback=f"I heard {value.strip()}. Is that name correct?"
+                            self._name_parts={};self._paused=False;self._name_needs_readback=False
+                            continue
                         self.slots[key] = value.strip()
         except (ValueError, TypeError, AttributeError, OSError, RuntimeError, ollama.ResponseError, HTTPError):
             return repeat_or_handoff(self)
+        if getattr(self,'_name_candidate',None):
+            self._awaiting_slot='name'
+            return self._name_readback,[]
         if 'party_size' in self.slots and not 1 <= self.slots['party_size'] <= self.restaurant['seating']['max_party_size']:
             self.slots.pop('party_size')
         if 'date' in self.slots:
@@ -979,6 +1041,7 @@ class Receptionist:
                               ('time', 'What time would you like?')]:
             if key not in self.slots:
                 self._awaiting_slot=key
+                if key=='name' and getattr(self.tools,'booking_source','chat')=='phone':question='May I have your name for the reservation?'
                 return welcome + question, called
         self._awaiting_slot=None
         availability = self.tools.check_table(self.slots['party_size'], self.slots['date'], self.slots['time'])
